@@ -1,0 +1,6 @@
+
+Map colors:
+    Wall = 0000FF
+    Ghost spawn = FF0004
+    Player spawn = 00D100
+    empty = FFFFFF

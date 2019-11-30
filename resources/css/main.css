@@ -1,0 +1,45 @@
+
+
+#mainBackground {
+    -fx-fill: #ffffff;
+}
+
+#gameOverBackground {
+    -fx-fill: #000000bd;
+}
+
+#pausedBackground {
+    -fx-fill: #00000049;
+}
+
+#topbarBackground {
+    -fx-fill: #858585;
+}
+
+#topbarBorder {
+    -fx-fill: #000000;
+}
+
+#gameOverDisplay {
+    -fx-text-fill: #c5c5c5;
+    -fx-font-family: "Arial";
+    -fx-font: 25 arial;
+}
+
+#gameOverDesc {
+    -fx-text-fill: #aca3a3;
+    -fx-font-family: "Arial";
+    -fx-font: 12 arial;
+}
+
+#pausedTitle {
+    -fx-text-fill: #f5f5f5;
+    -fx-font-family: "Arial";
+    -fx-font: 20 arial;
+}
+
+#pausedDesc {
+    -fx-text-fill: #e4e4e4;
+    -fx-font-family: "Arial";
+    -fx-font: 12 arial;
+}

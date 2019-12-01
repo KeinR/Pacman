@@ -13,14 +13,14 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.shape.Rectangle;
 
 
-import static net.keinr.util.Debug.logDebug;
+import static net.keinr.pacman.Main.logDebug;
 
 class Interface {
 
     // Text
     private static final Label
-    highScore = new Label("High Score: 000000000"),
-    score = new Label("Score: 000000000"),
+    highScore = new Label("High Score: 0"),
+    score = new Label("Score: 0"),
     gameOverDisplay = new Label("GAME OVER"),
     gameOverDesc = new Label("Press any key to retry..."),
     pausedTitle = new Label("Paused"),
@@ -29,6 +29,7 @@ class Interface {
     // Roots
     private static final Pane
     backgroundRoot = new Pane(),
+    gameRoot = new Pane(),
     entityRoot = new Pane(),
     gameOverRoot = new Pane(),
     pausedRoot = new Pane(),
@@ -75,7 +76,7 @@ class Interface {
         score.setLayoutX(5);
         score.setLayoutY(0);
 
-        highScore.setLayoutX(300);
+        highScore.setLayoutX(270);
         highScore.setLayoutY(0);
 
         backgroundRoot.getChildren().add(mainBackground);
@@ -84,7 +85,7 @@ class Interface {
 
         pausedRoot.getChildren().addAll(pausedBackground, pausedTitle, pausedDesc);
 
-        mainRoot.getChildren().addAll(backgroundRoot, entityRoot, gameOverRoot);
+        mainRoot.getChildren().addAll(backgroundRoot, gameRoot, entityRoot, gameOverRoot);
 
         overlayRoot.getChildren().addAll(topbarBackground, topbarBorder, score, highScore);
 
@@ -98,6 +99,10 @@ class Interface {
     }
 
     static void add(Node node) {
+        Platform.runLater(() -> gameRoot.getChildren().add(node));
+    }
+
+    static void addEntity(Node node) {
         Platform.runLater(() -> entityRoot.getChildren().add(node));
     }
 
@@ -109,7 +114,7 @@ class Interface {
     static void reset() {
         Platform.runLater(() -> {
             main.getChildren().add(gameOverRoot);
-            entityRoot.getChildren().clear();
+            gameRoot.getChildren().clear();
         });
     }
     */
@@ -123,17 +128,17 @@ class Interface {
     }
 
     static void remove(Node node) {
-        Platform.runLater(() -> entityRoot.getChildren().remove(node));
+        Platform.runLater(() -> gameRoot.getChildren().remove(node));
     }
 
     static void setScore(int value) {
         String val = String.valueOf(value);
-        Platform.runLater(() -> score.setText("Score:\n"+"0".repeat(9-val.length())+val));
+        Platform.runLater(() -> score.setText("Score: "+val));
     }
 
     static void setHighScore(int value) {
         String val = String.valueOf(value);
-        Platform.runLater(() -> highScore.setText("High Score:\n"+"0".repeat(9-val.length())+val));
+        Platform.runLater(() -> highScore.setText("High Score: "+val));
     }
 
     static void setGameOver() {

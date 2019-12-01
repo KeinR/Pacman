@@ -13,20 +13,29 @@ import java.io.IOException;
 import javax.imageio.ImageIO;
 import java.io.FileInputStream;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.NoSuchFileException;
+
 import java.util.Random;
 import java.util.List;
 import java.util.Deque;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 
+import static net.keinr.util.Ansi.YELLOW;
+
+// Debug imports
 import static net.keinr.util.Ansi.RED;
 import static net.keinr.util.Ansi.MAGENTA;
 import static net.keinr.util.Ansi.BLUE;
 import static net.keinr.util.Ansi.RESET;
 import static net.keinr.util.Ansi.BR_GREEN;
+import static net.keinr.util.Ansi.BR_BLUE;
 
-import static net.keinr.util.Debug.logDebug;
-import static net.keinr.util.Debug.fDebug;
+import static net.keinr.pacman.Main.logDebug;
 
 class Engine {
     // Moddable constants
@@ -36,7 +45,11 @@ class Engine {
     private static final double DOT_COLLECTION_DIST = 0.1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
     private static final int GHOST_COUNT = 1; // # of ghosts. Doesn't depend on spawnpoint availability, as they can stack if there's overflow
     private static final int PATH_MEMORY = 3; // How many moves a ghost will remember after an A* run. Higher numbers will make it harder for the ghosts to track a moving player
-    private static final int TRACKING_TIME = 50000; // How long a ghost will chase the player after spotting it (milliseconds)
+    private static final int TRACKING_TIME = 20000; // How long a ghost will chase the player after spotting it (milliseconds)
+    private static final Path SAVE_DATA_PATH = Paths.get(".pacman"); // Location where high scores will be saved
+    private static final int POINTS_PER_DOT = 1; // How many points the player gets for each dot picked up
+    private static final String MAP_SOURCE = "resources/map.png"; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
+
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -44,7 +57,9 @@ class Engine {
     private static final int ESP_DEC = 16711684; // Enemy spawn point color representation in base 10
     private static final int MAP_M = 20; // X/Y-length of tile matrix
     private static final double RATIO = 400/MAP_M; // Grid to pixels ratio
-    private static final int PATHFINDING_ITER_CAP = 1000; // Max A* iterations used to find a valid path to the target from ghost.
+    private static final int PATHFINDING_ITER_CAP = 1000; // Absolute max A* iterations used to find a valid path to the target from ghost.
+    private static final double PLAYER_RADIUS = RATIO/3; // radius of player
+    private static final double GHOST_RADIUS = RATIO/3; // radius of ghosts
 
     private static final Timeline cycleControl = new Timeline(new KeyFrame(Duration.millis(TICK_INTERVAL), e -> cycle()));
     private static final Random random = new Random();
@@ -53,6 +68,7 @@ class Engine {
     private static Ghost[] ghosts = new Ghost[GHOST_COUNT];
 
     private static volatile boolean gameOver = true, paused = false;
+    private static volatile int score, highScore;
 
     // Player related stuff
     private static volatile KeyCode playerDirection, queuedPlayerDirection;
@@ -61,7 +77,10 @@ class Engine {
     static void setup() {
         Interface.setOnKeyPressed(e -> {
             if (!gameOver) {
-                if (playerDirection != e.getCode()) {
+                if (paused) {
+                    paused = false;
+                    Interface.setUnpaused();
+                } else if (playerDirection != e.getCode()) {
                     switch (e.getCode()) {
                         case UP:
                             if (playerDirection == KeyCode.DOWN) {
@@ -92,10 +111,7 @@ class Engine {
                             }
                             break;
                         case P:
-                            if (paused) {
-                                paused = false;
-                                Interface.setUnpaused();
-                            } else {
+                            if (!paused) {
                                 paused = true;
                                 Interface.setPaused();
                             }
@@ -111,14 +127,14 @@ class Engine {
 
         // Load map
         try {
-            final BufferedImage image = ImageIO.read(new FileInputStream("resources/map.png"));
+            final BufferedImage image = ImageIO.read(new FileInputStream(MAP_SOURCE));
 
             List<Tile> enemySpawnpointsPrototype = new ArrayList<Tile>();
             List<Tile> playerSpawnpointsPrototype = new ArrayList<Tile>();
 
             for(int y = 0; y < map[0].length; y++) {
                 for (int x = 0; x < map.length; x++) {
-                    int value = image.getRGB(x, y) + 16777216;
+                    int value = image.getRGB(x, y) + 16777216; // Remove alpha value
                     if (value != WALL_DEC) {
                         map[x][y] = new Tile(x, y);
                         switch (value) { // Get sections
@@ -177,7 +193,25 @@ class Engine {
             ghosts[i] = new Ghost();
         }
 
-        playerDisplay.setRadius(RATIO/3);
+        playerDisplay.setRadius(PLAYER_RADIUS);
+        Interface.addEntity(playerDisplay);
+
+        // Load save data
+        try {
+            highScore = Integer.parseInt(Files.readString(SAVE_DATA_PATH, StandardCharsets.UTF_8));
+            Interface.setHighScore(highScore);
+        } catch (NoSuchFileException e) {
+            // It's fine, we'll make a new one later
+        } catch (IOException e) {
+            warn("Could not load save file: "+e.toString());
+        } catch (NumberFormatException e) {
+            warn("Save data is corrupted, and will be deleted");
+            try {
+                Files.delete(SAVE_DATA_PATH); // Remove corrupted save file so we don't encounter future errors
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
 
         // start(); // TEMP
     }
@@ -195,24 +229,50 @@ class Engine {
 
         // Spawn player
         Tile spawnpoint = playerSpawnpoints[random.nextInt(playerSpawnpoints.length)];
-        map[spawnpoint.x][spawnpoint.y].setCollected();
+        map[spawnpoint.x][spawnpoint.y].setCollected(false);
         playerDisplay.setCenterX(spawnpoint.x*RATIO+RATIO/2);
         playerDisplay.setCenterY(spawnpoint.y*RATIO+RATIO/2);
-        Interface.add(playerDisplay);
+        // Interface.add(playerDisplay);
         logDebug("Added player");
 
         playerDirection = KeyCode.P; // Starts paused
         cycleControl.play();
         Interface.setStartGame();
+
+        score = 0;
+        Interface.setScore(0);
+
         gameOver = false;
     }
 
     static void stop() {
-        Interface.remove(playerDisplay);
+        // Interface.remove(playerDisplay);
         Interface.setGameOver();
         cycleControl.stop();
+        save();
         logDebug("Game over, so sad...");
         gameOver = true;
+    }
+
+    private static synchronized void addScore(int value) {
+        score += value;
+        Interface.setScore(score);
+        if (score > highScore) {
+            highScore = score;
+            Interface.setHighScore(highScore);
+        }
+    }
+
+    private static void save() {
+        try {
+            Files.write(SAVE_DATA_PATH, String.valueOf(highScore).getBytes());
+        } catch (IOException e) {
+            warn("Score autosave failed: "+e.toString());
+        }
+    }
+
+    private static void warn(String message) {
+        System.out.println("["+YELLOW+"warning"+RESET+"] "+message);
     }
 
     private static void cycle() {
@@ -226,7 +286,7 @@ class Engine {
                     if (y-1 >= 0 && (map[x][y-1] != null || dist > 0.5)) {
                         playerDisplay.setCenterY(playerDisplay.getCenterY()-PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && y < MAP_M) {
-                            map[x][y].setCollected();
+                            map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
                     break;
@@ -235,7 +295,7 @@ class Engine {
                     if (y+1 < MAP_M && (map[x][y+1] != null || dist < 0.5)) {
                         playerDisplay.setCenterY(playerDisplay.getCenterY()+PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && y >= 0) {
-                            map[x][y].setCollected();
+                            map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
                     break;
@@ -244,7 +304,7 @@ class Engine {
                     if (x-1 >= 0 && (map[x-1][y] != null || playerDisplay.getCenterX()/RATIO - (int)(playerDisplay.getCenterX()/RATIO) > 0.5)) {
                         playerDisplay.setCenterX(playerDisplay.getCenterX()-PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && x < MAP_M) {
-                            map[x][y].setCollected();
+                            map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
                     break;
@@ -253,7 +313,7 @@ class Engine {
                     if (x+1 < MAP_M && (map[x+1][y] != null || dist < 0.5)) {
                         playerDisplay.setCenterX(playerDisplay.getCenterX()+PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && x >= 0) {
-                            map[x][y].setCollected();
+                            map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
                     break;
@@ -301,12 +361,15 @@ class Engine {
             this.display = new Circle(x*RATIO+RATIO/2, y*RATIO+RATIO/2, RATIO/6);
             Interface.add(this.display);
         }
-        private void setCollected() {
-            this.collected = true;
-            Interface.remove(display);
+        private void setCollected(boolean addScore) {
+            if (!collected) {
+                if (addScore) addScore(POINTS_PER_DOT);
+                collected = true;
+                Interface.remove(display);
+            }
         }
         private void reset() {
-            this.collected = false;
+            collected = false;
             Interface.remove(this.display); // Making sure that the node isn't already listed as a precaution against IllegalArgumentException
             Interface.add(this.display);
         }
@@ -317,22 +380,27 @@ class Engine {
     }
 
     private static class Ghost {
-        private Deque<KeyCode> moveQueue = new ArrayDeque<KeyCode>();
-        private KeyCode currentDirection = KeyCode.P;
-        private final Circle display = new Circle(RATIO/3, Color.RED);
-        private boolean alive = true, changeDirClear = true;
-        private int trackingTime = 0;
+        private Deque<KeyCode> moveQueue;
+        private KeyCode currentDirection;
+        private final Circle display = new Circle(GHOST_RADIUS, Color.RED);
+        private boolean alive, changeDirClear;
+        private int trackingTime;
         private Tile trackedRandomTile;
-        private Ghost() {}
+        private Ghost() {
+            Interface.addEntity(display);
+        }
 
         private void spawn() {
-            Interface.remove(display); // Removing as a precaution
             Tile spawnpoint = enemySpawnpoints[random.nextInt(enemySpawnpoints.length)];
-            map[spawnpoint.x][spawnpoint.y].setCollected();
+            map[spawnpoint.x][spawnpoint.y].setCollected(false);
             display.setCenterX(spawnpoint.x*RATIO+RATIO/2);
             display.setCenterY(spawnpoint.y*RATIO+RATIO/2);
-            Interface.add(display);
             alive = true;
+            changeDirClear = true;
+            trackingTime = 0;
+            trackedRandomTile = null;
+            currentDirection = KeyCode.P;
+            moveQueue = new ArrayDeque<KeyCode>();
         }
 
         private void move() {
@@ -399,7 +467,7 @@ class Engine {
 
                         int px, py;
                         // If the ghost has lost track of the player, have the ghost move wander to a random tile
-                        if (trackingTime <= 0 /* DEBUG */ && false /* END DEBUG */) { // STATEMENT DISABLED FOR DEBUG
+                        if (trackingTime <= 0) {
                             if (trackedRandomTile == null || (x == trackedRandomTile.x && y == trackedRandomTile.y)) {
                                 // Search for an open random tile to wander to
                                 while (map[(px = random.nextInt(MAP_M))][(py = random.nextInt(MAP_M))] == null) {}
@@ -414,6 +482,9 @@ class Engine {
                             px = pxf;
                             py = pyf;
                         }
+
+
+                        logDebug(BR_GREEN+"Tracking time: "+trackingTime+RESET);
 
                         // Generate A* path
 
@@ -433,10 +504,6 @@ class Engine {
                                     focus = node;
                                 }
                             }
-                            System.out.print("("+focus.x+", "+focus.y+") ");
-                            // if (openList.remove(minIndex) == null) {
-                            //     logDebug(RED+"FAILED TO REMOVE NODE"+RESET);
-                            // }
                             closedMap[focus.x][focus.y] = true;
                             openList.remove(focus);
 
@@ -447,11 +514,6 @@ class Engine {
                                 break;
                             }
 
-                            final boolean goLog = focus.x == 16 && focus.y == 18;
-                            if (goLog) {
-                                logDebug(MAGENTA+" FOUND TARGET: ");
-                            }
-
                             // Gen chillren
                             // Ensure next tile is: in bounds, not a wall, and hasn't already been iterated over
                             int tScore = focus.c + 1;
@@ -459,10 +521,10 @@ class Engine {
                                 boolean inOpenList = false;
                                 for (Node node : openList) {
                                     if (node.x == focus.x && node.y == focus.y-1) {
+                                        // Allow cheaper nodes to steal children from other nodes
                                         if (node.c < tScore) {
                                             node.setParent(focus);
                                         }
-                                        System.out.println("\n"+MAGENTA+" ("+(focus.y-1)+", "+focus.x+") IS IN LIST "+RESET);
                                         inOpenList = true;
                                         break;
                                     }
@@ -472,7 +534,6 @@ class Engine {
                                     tScore,
                                     Math.abs(focus.x-px)+Math.abs(focus.y-1-px), KeyCode.UP));
                                 }
-                                if (goLog) System.out.print("0 ");
                             }
                             if (focus.y+1 < MAP_M && map[focus.x][focus.y+1] != null && !closedMap[focus.x][focus.y+1]) { // DOWN
                                 boolean inOpenList = false;
@@ -481,7 +542,6 @@ class Engine {
                                         if (node.c < tScore) {
                                             node.setParent(focus);
                                         }
-                                        System.out.println("\n"+MAGENTA+" ("+(focus.y+1)+", "+focus.x+") IS IN LIST "+RESET);
                                         inOpenList = true;
                                         break;
                                     }
@@ -492,7 +552,6 @@ class Engine {
                                     Math.abs(focus.x-px)+Math.abs(focus.y+1-px), KeyCode.DOWN));
                                     closedMap[focus.x][focus.y+1] = true;
                                 }
-                                if (goLog) System.out.print("1 ");
                             }
                             if (focus.x-1 >= 0 && map[focus.x-1][focus.y] != null && !closedMap[focus.x-1][focus.y]) { // LEFT
                                 boolean inOpenList = false;
@@ -501,7 +560,6 @@ class Engine {
                                         if (node.c < tScore) {
                                             node.setParent(focus);
                                         }
-                                        System.out.println("\n"+MAGENTA+" ("+focus.y+", "+(focus.x-1)+") IS IN LIST "+RESET);
                                         inOpenList = true;
                                         break;
                                     }
@@ -512,7 +570,6 @@ class Engine {
                                     Math.abs(focus.x-1-px)+Math.abs(focus.y-px), KeyCode.LEFT));
                                     closedMap[focus.x-1][focus.y] = true;
                                 }
-                                if (goLog) System.out.print("2 ");
                             }
                             if (focus.x+1 < MAP_M  && map[focus.x+1][focus.y] != null && !closedMap[focus.x+1][focus.y]) { // RIGHT
                                 boolean inOpenList = false;
@@ -521,7 +578,6 @@ class Engine {
                                         if (node.c < tScore) {
                                             node.setParent(focus);
                                         }
-                                        System.out.println("\n"+MAGENTA+" ("+focus.y+", "+(focus.x+1)+") IS IN LIST "+RESET);
                                         inOpenList = true;
                                         break;
                                     }
@@ -532,9 +588,7 @@ class Engine {
                                     Math.abs(focus.x+1-px)+Math.abs(focus.y-px), KeyCode.RIGHT));
                                     closedMap[focus.x+1][focus.y] = true;
                                 }
-                                if (goLog) System.out.print("3 ");
                             }
-                            if (goLog) System.out.print(RESET.toString());
                         }
 
                         // If we didn't reach the target before the iteration cap was hit, or there's no path, just get the "closets" one
@@ -559,7 +613,7 @@ class Engine {
 
                         // Going from the "start" of the path (the end of the sequence), record into memory
                         int cap;
-                        if (trackingTime > 0 /* DEBUG */ || true /* END DEBUG */) { // UNCONDITIONALLY ENABLED FOR DEBUG
+                        if (trackingTime > 0) {
                             cap = sequence.size() - 1 - PATH_MEMORY;
                             if (cap <= 0) {
                                 cap = sequence.size() - 2;
@@ -576,15 +630,6 @@ class Engine {
                         }
                         // moveQueue.add(sequence.get(sequence.size()-1));
 
-                        fDebug(() -> {
-                            if (trackingTime > 0) {
-                                System.out.println("Sequence:");
-                                for (int i = sequence.size()-1; i >= 0; i--) {
-                                    System.out.println(sequence.get(i));
-                                }
-                            } else System.out.println("Not tracking.");
-                        });
-
                         changeDirection(x, y);
                         logDebug("Polled move at END |"+currentDirection+"|");
 
@@ -600,7 +645,7 @@ class Engine {
                 // logDebug(RED+"Tracking player~"+trackingTime+RESET);
             }
 
-            if (playerInView(x, y, pxf, pyf) /* DEBUG */ && false /* END DEBUG */) { // UNCONDITIONALLY DISABLED FOR DEBUG
+            if (playerInView(x, y, pxf, pyf)) {
                 if (trackingTime <= 0) {
                     logDebug(RED+"Path reset"+RESET);
                     moveQueue = new ArrayDeque<KeyCode>(); // Cancel queued path
@@ -618,7 +663,11 @@ class Engine {
          */
         private boolean playerInView(int x, int y, int px, int py) {
             if (x == px || y == py) {
-                if (x < px) {
+                if (
+                    Math.abs(display.getCenterX()-playerDisplay.getCenterX()) <= PLAYER_RADIUS+GHOST_RADIUS && 
+                    Math.abs(display.getCenterY()-playerDisplay.getCenterY()) <= PLAYER_RADIUS+GHOST_RADIUS
+                    ) stop();
+                else if (x < px) {
                     for (int i = x; i < px; i++) {
                         if (map[i][y] == null) return false;
                     }
@@ -658,7 +707,6 @@ class Engine {
             private int c, f; // Cost & function
             private final KeyCode direction;
             private Node(Node parent, int x, int y, int c, int h, KeyCode direction) {
-                if (parent != null) System.out.print(BR_GREEN+" CREATING @("+x+", "+y+") with parent @("+parent.x+", "+parent.y+") "+RESET);
                 this.parent = parent;
                 this.x = x;
                 this.y = y;
@@ -668,7 +716,6 @@ class Engine {
                 this.direction = direction;
             }
             private void setParent(Node node) {
-                System.out.println("\n"+MAGENTA+"PARENT SWITCH"+RESET);
                 this.c = node.c + 1;
                 this.f = this.c + this.h;
                 this.parent = node;

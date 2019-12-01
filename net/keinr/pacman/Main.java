@@ -5,21 +5,24 @@ import javafx.stage.Stage;
 import java.util.concurrent.Executors;
 
 import net.keinr.util.Debug;
-import static net.keinr.util.Debug.logDebug;
 
 public class Main extends Application {
     private static final boolean DEBUG_ENABLED = true;
+    
+    private static final Debug debug = new Debug(DEBUG_ENABLED);
 
     @Override
     public void start(Stage stage) {
         if (DEBUG_ENABLED) {
-            Debug.setShorthand("^net\\.keinr\\.pacman\\.");
-            logDebug("Debug enabled");
-        } else {
-            Debug.toggleDebug(false);
+            debug.setShorthand("^net\\.keinr\\.pacman\\.");
+            debug.log("Debug enabled");
         }
         Interface.setup(stage);
         Executors.newSingleThreadExecutor().execute(() -> Engine.setup());
+    }
+
+    static void logDebug(String message) {
+        debug.logRouted(message, 1);
     }
 
     public static void main(String[] args) { launch(args); }

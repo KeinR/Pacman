@@ -1,6 +1,9 @@
 # Compiled class file
 *.class
 
+# Save data
+.pacman
+
 # Log file
 *.log
 

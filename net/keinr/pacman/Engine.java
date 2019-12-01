@@ -29,7 +29,11 @@ class Engine {
     // Moddable constants
     private static final int TICK_INTERVAL = 10; // How often the game cycle runs, or "ticks", in milliseconds
     private static final double PLAYER_SPEED = 0.3; // How fast the player moves in pixels/tick
+    private static final double GHOST_SPEED = 0.2; // How fast the ghosts moves in pixels/tick
     private static final double DOT_COLLECTION_DIST = 0.1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
+    private static final int GHOST_COUNT = 1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
+    private static final int PATHFINDING_ACCURACY = 10000; // Max A* iterations used to find a valid path to the target from ghost
+    private static final int PATH_MEMORY = 3; // How many moves a ghost will remember after an A* run. Higher numbers will make it hard for the ghosts to track a moving player
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -42,6 +46,7 @@ class Engine {
     private static final Random random = new Random();
     private static Tile[] enemySpawnpoints, playerSpawnpoints;
     private static Tile[][] map = new Tile[MAP_M][MAP_M];
+    private static Ghost[] ghosts = new Ghost[GHOST_COUNT];
 
     private static volatile boolean gameOver = true, paused = false;
 
@@ -163,20 +168,29 @@ class Engine {
             e.printStackTrace();
         }
 
+        // Initialize ghost array
+        for (int i = 0; i < ghosts.length; i++) {
+            ghosts[i] = new Ghost();
+        }
+
         playerDisplay.setRadius(RATIO/3);
 
         // start(); // TEMP
     }
 
     static void start() {
+        // Reset map
         for (int x = 0; x < MAP_M; x++) {
             for (int y = 0; y < MAP_M; y++) {
                 if (map[x][y] != null) map[x][y].reset();
             }
         }
 
-        Tile spawnpoint = playerSpawnpoints[random.nextInt(playerSpawnpoints.length)];
+        // Spawn ghosts
+        for (Ghost ghost : ghosts) ghost.spawn();
 
+        // Spawn player
+        Tile spawnpoint = playerSpawnpoints[random.nextInt(playerSpawnpoints.length)];
         map[spawnpoint.x][spawnpoint.y].setCollected();
         playerDisplay.setCenterX(spawnpoint.x*RATIO+RATIO/2);
         playerDisplay.setCenterY(spawnpoint.y*RATIO+RATIO/2);
@@ -265,6 +279,7 @@ class Engine {
                     // logDebug("Denied - ("+xx+", "+yy+")");
                 }
             }
+            for (Ghost ghost : ghosts) ghost.move();
         }
     }
 
@@ -294,15 +309,198 @@ class Engine {
     }
 
     private static class Ghost {
-        private double x, y;
         private final Deque<KeyCode> moveQueue = new ArrayDeque<KeyCode>();
-        private KeyCode currentDirection;
-        private Ghost() {
-            Tile spawnpoint = playerSpawnpoints[random.nextInt(playerSpawnpoints.length)];
+        private KeyCode currentDirection = KeyCode.UP;
+        private final Circle display = new Circle(RATIO/3, Color.RED);
+        private boolean alive = true, changeDirClear = true;
+        private Ghost() {}
+
+        private void spawn() {
+            Interface.remove(display); // Removing as a precaution
+            Tile spawnpoint = enemySpawnpoints[random.nextInt(playerSpawnpoints.length)];
+            map[spawnpoint.x][spawnpoint.y].setCollected();
+            display.setCenterX(spawnpoint.x*RATIO+RATIO/2);
+            display.setCenterY(spawnpoint.y*RATIO+RATIO/2);
+            Interface.add(display);
+            alive = true;
         }
 
         private void move() {
+            final int
+            x = (int)(display.getCenterX()/RATIO),
+            y = (int)(display.getCenterY()/RATIO); // Grid x/y values for ghost
 
+            double dist;
+            switch (currentDirection) {
+                case UP:
+                    dist = display.getCenterY()/RATIO - y;
+                    if (y-1 >= 0 && (map[x][y-1] != null || dist >= 0.5)) {
+                        display.setCenterY(display.getCenterY()-GHOST_SPEED);
+                    }
+                    break;
+                case DOWN:
+                    dist = display.getCenterY()/RATIO - y;
+                    if (y+1 < MAP_M && (map[x][y+1] != null || dist <= 0.5)) {
+                        display.setCenterY(display.getCenterY()+GHOST_SPEED);
+                    }
+                    break;
+                case LEFT:
+                    dist = display.getCenterX()/RATIO - x;
+                    if (x-1 >= 0 && (map[x-1][y] != null || display.getCenterX()/RATIO - (int)(display.getCenterX()/RATIO) >= 0.5)) {
+                        display.setCenterX(display.getCenterX()-GHOST_SPEED);
+                    }
+                    break;
+                case RIGHT:
+                    dist = display.getCenterX()/RATIO - x;
+                    if (x+1 < MAP_M && (map[x+1][y] != null || dist <= 0.5)) {
+                        display.setCenterX(display.getCenterX()+GHOST_SPEED);
+                    }
+                    break;
+            }
+
+            // Check if ghost has completed a tile move
+            if (moveQueue.peek() != null) {
+                double xx = display.getCenterX()/RATIO - x;
+                double yy = display.getCenterY()/RATIO - y;
+                if (xx > 0.485 && xx < 0.515 && yy > 0.485 && yy < 0.515) {
+                    // Recenter and poll
+                    if (changeDirClear) {
+                        changeDirClear = false;
+                        currentDirection = moveQueue.poll();
+                        display.setCenterX((x+0.5) * RATIO);
+                        display.setCenterY((y+0.5) * RATIO);
+                        logDebug("Polled move |"+currentDirection+"|");
+                    }
+                } else {
+                    changeDirClear = true;
+                }
+            } else {
+
+                // Generate A* path
+
+                final int
+                px = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
+                py = (int)(playerDisplay.getCenterY()/RATIO);
+
+                final List<Node> openList = new ArrayList<Node>();
+                boolean[][] closedMap = new boolean[MAP_M][MAP_M];
+                openList.add(new Node(null, x, y, Math.abs(x-px)+Math.abs(y-px), null));
+
+                Node result = null;
+
+                for (int iterations = 0; openList.size() > 0 && iterations < PATHFINDING_ACCURACY; iterations++) {
+
+                    // Find the (open) node with the lowest f value, and move it to the closed list
+                    int minIndex = 0;
+                    for (int i = 0; i < openList.size(); i++) {
+                        if (openList.get(i).f < openList.get(minIndex).f) {
+                            minIndex = i;
+                        }
+                    }
+                    final Node focus = openList.get(minIndex);
+                    closedMap[focus.x][focus.y] = true;
+                    openList.remove(minIndex);
+
+                    if (focus.x == px && focus.y == py) { // Target aquired
+                        result = focus;
+                        logDebug("Found after "+iterations+" iterations");
+                        break;
+                    }
+
+                    // Gen chillren
+                    // Ensure next tile is: in bounds, not a wall, and hasn't already been iterated over
+                    if (focus.y-1 >= 0 && map[focus.x][focus.y-1] != null && !closedMap[focus.x][focus.y-1]) { // UP
+                        openList.add(new Node(focus, focus.x, focus.y-1,
+                        /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y-1-x) +
+                        /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y-1-px),
+                        KeyCode.UP));
+                    }
+                    if (focus.y+1 < MAP_M && map[focus.x][focus.y+1] != null && !closedMap[focus.x][focus.y+1]) { // DOWN
+                        openList.add(new Node(focus, focus.x, focus.y+1,
+                        /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y+1-x) +
+                        /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y+1-px),
+                        KeyCode.DOWN));
+                    }
+                    if (focus.x-1 >= 0 && map[focus.x-1][focus.y] != null && !closedMap[focus.x-1][focus.y]) { // LEFT
+                        openList.add(new Node(focus, focus.x-1, focus.y,
+                        /* from home */ Math.abs(focus.x-1-x)+Math.abs(focus.y-x) +
+                        /* from target */ Math.abs(focus.x-1-px)+Math.abs(focus.y-px),
+                        KeyCode.LEFT));
+                    }
+                    if (focus.x+1 < MAP_M  && map[focus.x+1][focus.y] != null && !closedMap[focus.x+1][focus.y]) { // RIGHT
+                        openList.add(new Node(focus, focus.x+1, focus.y,
+                        /* from home */ Math.abs(focus.x+1-x)+Math.abs(focus.y-x) +
+                        /* from target */ Math.abs(focus.x+1-px)+Math.abs(focus.y-px),
+                        KeyCode.RIGHT));
+                    }
+                }
+
+                // If we didn't reach the target before the iteration cap was hit, or there's no path, just get the "closets" one
+                if (result == null) {
+                    int minIndex = 0;
+                    for (int i = 0; i < openList.size(); i++) {
+                        if (openList.get(i).f < openList.get(minIndex).f) {
+                            minIndex = i;
+                        }
+                    }
+                    result = openList.get(minIndex);
+                }
+
+                // Going backwards, get KeyCodes as list
+                List<KeyCode> sequence = new ArrayList<KeyCode>();
+                while (result.parent != null && result.parent.direction != null) {
+                    result = result.parent;
+                    sequence.add(result.direction);
+                    // logDebug("----------------Adding -> "+result.direction+", is origin = "+(result.x == x && result.y == y));
+                }
+
+
+                // Going from the "start" of the path (the end of the sequence), record into memory
+                int cap = sequence.size() - PATH_MEMORY;
+                if (cap <= 0) {
+                    cap = sequence.size() - 2;
+                    if (cap <= 0) {
+                        cap = 0;
+                    }
+                }
+                for (int i = sequence.size()-1; i >= cap; i--) {
+                    // logDebug("Adding -> |"+sequence.get(i)+"|");
+                    moveQueue.add(sequence.get(i));
+                }
+                // moveQueue.add(sequence.get(sequence.size()-1));
+
+                changeDirClear = false;
+                currentDirection = moveQueue.poll();
+                display.setCenterX((x+0.5) * RATIO);
+                display.setCenterY((y+0.5) * RATIO);
+                logDebug("Polled move at END |"+currentDirection+"|");
+
+                logDebug("Found path; length = "+sequence.size()+" from ("+x+", "+y+") to ("+px+", "+py+")");
+
+                /*
+                final int choice = random.nextInt(4);
+                switch (choice) {
+                    case 0: moveQueue.add(KeyCode.UP); break;
+                    case 1: moveQueue.add(KeyCode.DOWN); break;
+                    case 2: moveQueue.add(KeyCode.LEFT); break;
+                    case 3: moveQueue.add(KeyCode.RIGHT); break;
+                }
+                logDebug("change course to "+moveQueue.peek());
+                */
+            }
+        }
+
+        private static class Node {
+            final Node parent;
+            final int x, y, f;
+            final KeyCode direction;
+            private Node(Node parent, int x, int y, int f, KeyCode direction) {
+                this.parent = parent;
+                this.x = x;
+                this.y = y;
+                this.f = f;
+                this.direction = direction;
+            }
         }
     }
 }

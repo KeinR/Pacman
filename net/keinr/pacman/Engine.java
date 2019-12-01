@@ -6,7 +6,6 @@ import javafx.animation.KeyFrame;
 import javafx.scene.input.KeyCode;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.paint.Color;
-// import javafx.scene.Node;
 import javafx.scene.shape.Circle;
 
 import java.awt.image.BufferedImage;
@@ -21,6 +20,8 @@ import java.util.ArrayList;
 import java.util.ArrayDeque;
 
 import static net.keinr.util.Ansi.RED;
+import static net.keinr.util.Ansi.MAGENTA;
+import static net.keinr.util.Ansi.BLUE;
 import static net.keinr.util.Ansi.RESET;
 
 import static net.keinr.util.Debug.logDebug;
@@ -28,12 +29,13 @@ import static net.keinr.util.Debug.logDebug;
 class Engine {
     // Moddable constants
     private static final int TICK_INTERVAL = 10; // How often the game cycle runs, or "ticks", in milliseconds
-    private static final double PLAYER_SPEED = 0.3; // How fast the player moves in pixels/tick
-    private static final double GHOST_SPEED = 0.2; // How fast the ghosts moves in pixels/tick
+    private static final double PLAYER_SPEED = 0.5; // How fast the player moves in pixels/tick
+    private static final double GHOST_SPEED = 0.4; // How fast the ghosts moves in pixels/tick
     private static final double DOT_COLLECTION_DIST = 0.1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
-    private static final int GHOST_COUNT = 1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
-    private static final int PATHFINDING_ACCURACY = 10000; // Max A* iterations used to find a valid path to the target from ghost
-    private static final int PATH_MEMORY = 3; // How many moves a ghost will remember after an A* run. Higher numbers will make it hard for the ghosts to track a moving player
+    private static final int GHOST_COUNT = 1; // # of ghosts. Doesn't depend on spawnpoint availability, as they can stack if there's overflow
+    private static final int PATHFINDING_ACCURACY = 1000; // Max A* iterations used to find a valid path to the target from ghost.
+    private static final int PATH_MEMORY = 3; // How many moves a ghost will remember after an A* run. Higher numbers will make it harder for the ghosts to track a moving player
+    private static final int TRACKING_TIME = 5000; // How long a ghost will chase the player after spotting it (milliseconds)
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -224,7 +226,7 @@ class Engine {
                         if (dist > DOT_COLLECTION_DIST && y < MAP_M) {
                             map[x][y].setCollected();
                         }
-                    }
+                    } else recenterPlayer(x, y);
                     break;
                 case DOWN:
                     dist = playerDisplay.getCenterY()/RATIO - y;
@@ -233,7 +235,7 @@ class Engine {
                         if (dist > DOT_COLLECTION_DIST && y >= 0) {
                             map[x][y].setCollected();
                         }
-                    }
+                    } else recenterPlayer(x, y);
                     break;
                 case LEFT:
                     dist = playerDisplay.getCenterX()/RATIO - x;
@@ -242,7 +244,7 @@ class Engine {
                         if (dist > DOT_COLLECTION_DIST && x < MAP_M) {
                             map[x][y].setCollected();
                         }
-                    }
+                    } else recenterPlayer(x, y);
                     break;
                 case RIGHT:
                     dist = playerDisplay.getCenterX()/RATIO - x;
@@ -251,7 +253,7 @@ class Engine {
                         if (dist > DOT_COLLECTION_DIST && x >= 0) {
                             map[x][y].setCollected();
                         }
-                    }
+                    } else recenterPlayer(x, y);
                     break;
                 // case P: // Do nothing
             }
@@ -268,8 +270,7 @@ class Engine {
                     }
                     if (canChangeDirection) {
                         // Re-center & switch to next move
-                        playerDisplay.setCenterX((x+0.5) * RATIO);
-                        playerDisplay.setCenterY((y+0.5) * RATIO);
+                        recenterPlayer(x, y);
                         playerDirection = queuedPlayerDirection;
                         queuedPlayerDirection = null;
                     } else {
@@ -281,6 +282,11 @@ class Engine {
             }
             for (Ghost ghost : ghosts) ghost.move();
         }
+    }
+
+    private static void recenterPlayer(int gridX, int gridY) {
+        playerDisplay.setCenterX((gridX+0.5) * RATIO);
+        playerDisplay.setCenterY((gridY+0.5) * RATIO);
     }
 
     private static class Tile {
@@ -310,14 +316,16 @@ class Engine {
 
     private static class Ghost {
         private final Deque<KeyCode> moveQueue = new ArrayDeque<KeyCode>();
-        private KeyCode currentDirection = KeyCode.UP;
+        private KeyCode currentDirection = KeyCode.P;
         private final Circle display = new Circle(RATIO/3, Color.RED);
         private boolean alive = true, changeDirClear = true;
+        private int trackingTime = 0, sinceLastTrack = 0;
+        private Tile trackedRandomTile;
         private Ghost() {}
 
         private void spawn() {
             Interface.remove(display); // Removing as a precaution
-            Tile spawnpoint = enemySpawnpoints[random.nextInt(playerSpawnpoints.length)];
+            Tile spawnpoint = enemySpawnpoints[random.nextInt(enemySpawnpoints.length)];
             map[spawnpoint.x][spawnpoint.y].setCollected();
             display.setCenterX(spawnpoint.x*RATIO+RATIO/2);
             display.setCenterY(spawnpoint.y*RATIO+RATIO/2);
@@ -328,21 +336,7 @@ class Engine {
         private void move() {
             final int
             x = (int)(display.getCenterX()/RATIO),
-            y = (int)(display.getCenterY()/RATIO), // Grid x/y values for ghost
-            px = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
-            py = (int)(playerDisplay.getCenterY()/RATIO);
-
-            // if (Math.abs(x-px)+Math.abs(y-py) == 1) {
-            //     if (x > px) { // LEFT
-            //         moveQueue.add(KeyCode.LEFT);
-            //     } else if (x < px) { // RIGHT
-            //         moveQueue.add(KeyCode.RIGHT);
-            //     } else if (y > py) { // UP
-            //         moveQueue.add(KeyCode.UP);
-            //     } else /*if (y < py)*/ { // DOWN
-            //         moveQueue.add(KeyCode.DOWN);
-            //     }
-            // }
+            y = (int)(display.getCenterY()/RATIO); // Grid x/y values for ghost
 
             double dist;
             switch (currentDirection) {
@@ -350,24 +344,36 @@ class Engine {
                     dist = display.getCenterY()/RATIO - y;
                     if (y-1 >= 0 && (map[x][y-1] != null || dist >= 0.5)) {
                         display.setCenterY(display.getCenterY()-GHOST_SPEED);
+                    } else {
+                        logDebug(RED+"UP denied"+RESET);
+                        recenter(x, y);
                     }
                     break;
                 case DOWN:
                     dist = display.getCenterY()/RATIO - y;
                     if (y+1 < MAP_M && (map[x][y+1] != null || dist <= 0.5)) {
                         display.setCenterY(display.getCenterY()+GHOST_SPEED);
+                    } else {
+                        logDebug(RED+"DOWN denied"+RESET);
+                        recenter(x, y);
                     }
                     break;
                 case LEFT:
                     dist = display.getCenterX()/RATIO - x;
                     if (x-1 >= 0 && (map[x-1][y] != null || display.getCenterX()/RATIO - (int)(display.getCenterX()/RATIO) >= 0.5)) {
                         display.setCenterX(display.getCenterX()-GHOST_SPEED);
+                    } else {
+                        logDebug(RED+"LEFT denied"+RESET);
+                        recenter(x, y);
                     }
                     break;
                 case RIGHT:
                     dist = display.getCenterX()/RATIO - x;
                     if (x+1 < MAP_M && (map[x+1][y] != null || dist <= 0.5)) {
                         display.setCenterX(display.getCenterX()+GHOST_SPEED);
+                    } else {
+                        logDebug(RED+"RIGHT denied"+RESET);
+                        recenter(x, y);
                     }
                     break;
                 case P:
@@ -379,11 +385,40 @@ class Engine {
             double xx = display.getCenterX()/RATIO - x;
             double yy = display.getCenterY()/RATIO - y;
             if (xx > 0.485 && xx < 0.515 && yy > 0.485 && yy < 0.515) {
-                if (changeDirClear) {
+                int
+                px = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
+                py = (int)(playerDisplay.getCenterY()/RATIO);
+
+                if (changeDirClear && (x != px || y != py)) {
                     if (moveQueue.peek() != null) {
                         changeDirection(x, y);
                         logDebug("Polled move |"+currentDirection+"|");
                     } else {
+
+                        // If the ghost has lost track of the player, have the ghost move wander to a random tile
+                        if (trackingTime <= 0) {
+                            boolean canSeePlayer = playerInView(x, y, px, py);
+                            if (!canSeePlayer) {
+                                if (trackedRandomTile == null || (x == trackedRandomTile.x && y == trackedRandomTile.y)) {
+                                    // Search for an open random tile to wander to
+                                    while (map[(px = random.nextInt(MAP_M))][(py = random.nextInt(MAP_M))] == null) {}
+                                    trackedRandomTile = map[px][py];
+                                    logDebug(BLUE+"New target -> ("+px+", "+py+")"+RESET);
+                                } else {
+                                    px = trackedRandomTile.x;
+                                    py = trackedRandomTile.y;
+                                }
+                                logDebug("Tracking random -> ("+px+", "+py+")");
+                            } else {
+                                trackingTime = TRACKING_TIME;
+                                System.out.println("+++++++PLAYER SPOTTED++++++++++");
+                            }
+                        } else {
+                            trackingTime -= sinceLastTrack;
+                            sinceLastTrack = 0;
+                            logDebug(RED+"Tracking player~"+trackingTime+RESET);
+                        }
+
                         // Generate A* path
 
                         final List<Node> openList = new ArrayList<Node>();
@@ -407,7 +442,7 @@ class Engine {
 
                             if (focus.x == px && focus.y == py) { // Target aquired
                                 result = focus;
-                                logDebug("Found after "+iterations+" iterations");
+                                logDebug(MAGENTA+"Found at ("+focus.x+", "+focus.y+") after "+iterations+" iterations"+RESET);
                                 break;
                             }
 
@@ -455,12 +490,11 @@ class Engine {
                         while (result != null && result.direction != null) {
                             sequence.add(result.direction);
                             result = result.parent;
-                            // logDebug("----------------Adding -> "+result.direction+", is origin = "+(result.x == x && result.y == y));
                         }
 
 
                         // Going from the "start" of the path (the end of the sequence), record into memory
-                        int cap = sequence.size() - PATH_MEMORY;
+                        int cap = sequence.size() - 1 - PATH_MEMORY;
                         if (cap <= 0) {
                             cap = sequence.size() - 2;
                             if (cap <= 0) {
@@ -468,7 +502,7 @@ class Engine {
                             }
                         }
                         for (int i = sequence.size()-1; i >= cap; i--) {
-                            // logDebug("Adding -> |"+sequence.get(i)+"|");
+                            logDebug("Adding -> |"+sequence.get(i)+"|");
                             moveQueue.add(sequence.get(i));
                         }
                         // moveQueue.add(sequence.get(sequence.size()-1));
@@ -482,12 +516,47 @@ class Engine {
             } else {
                 changeDirClear = true;
             }
+            sinceLastTrack += TICK_INTERVAL;
+        }
+
+        /**
+         * @param x Ghost grid x
+         * @param y Ghost grid y
+         * @param px Player grid x
+         * @param py Player grid y
+         */
+        private boolean playerInView(int x, int y, int px, int py) {
+            if (x == px || y == py) {
+                if (x < px) {
+                    for (int i = x; i < px; i++) {
+                        if (map[i][y] == null) return false;
+                    }
+                } else if (x > px) {
+                    for (int i = x; i > px; i--) {
+                        if (map[i][y] == null) return false;
+                    }
+                } else if (y < py) {
+                    for (int i = y; i < py; i++) {
+                        if (map[x][i] == null) return false;
+                    }
+                } else/* if (y > py)*/ {
+                    for (int i = y; i > py; i--) {
+                        if (map[x][i] == null) return false;
+                    }
+                }
+                return true;
+            }
+            return false;
         }
 
         private void changeDirection(int gridX, int gridY) {
             changeDirClear = false;
             currentDirection = moveQueue.poll();
             if (currentDirection == null) currentDirection = KeyCode.P; // P for paused
+            recenter(gridX, gridY);
+        }
+
+        private void recenter(int gridX, int gridY) {
             display.setCenterX((gridX+0.5) * RATIO);
             display.setCenterY((gridY+0.5) * RATIO);
         }

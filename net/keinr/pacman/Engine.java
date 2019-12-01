@@ -328,7 +328,21 @@ class Engine {
         private void move() {
             final int
             x = (int)(display.getCenterX()/RATIO),
-            y = (int)(display.getCenterY()/RATIO); // Grid x/y values for ghost
+            y = (int)(display.getCenterY()/RATIO), // Grid x/y values for ghost
+            px = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
+            py = (int)(playerDisplay.getCenterY()/RATIO);
+
+            // if (Math.abs(x-px)+Math.abs(y-py) == 1) {
+            //     if (x > px) { // LEFT
+            //         moveQueue.add(KeyCode.LEFT);
+            //     } else if (x < px) { // RIGHT
+            //         moveQueue.add(KeyCode.RIGHT);
+            //     } else if (y > py) { // UP
+            //         moveQueue.add(KeyCode.UP);
+            //     } else /*if (y < py)*/ { // DOWN
+            //         moveQueue.add(KeyCode.DOWN);
+            //     }
+            // }
 
             double dist;
             switch (currentDirection) {
@@ -356,138 +370,126 @@ class Engine {
                         display.setCenterX(display.getCenterX()+GHOST_SPEED);
                     }
                     break;
+                case P:
+                    changeDirClear = true;
+                    break;
             }
 
             // Check if ghost has completed a tile move
-            if (moveQueue.peek() != null) {
-                double xx = display.getCenterX()/RATIO - x;
-                double yy = display.getCenterY()/RATIO - y;
-                if (xx > 0.485 && xx < 0.515 && yy > 0.485 && yy < 0.515) {
-                    // Recenter and poll
-                    if (changeDirClear) {
-                        changeDirClear = false;
-                        currentDirection = moveQueue.poll();
-                        display.setCenterX((x+0.5) * RATIO);
-                        display.setCenterY((y+0.5) * RATIO);
+            double xx = display.getCenterX()/RATIO - x;
+            double yy = display.getCenterY()/RATIO - y;
+            if (xx > 0.485 && xx < 0.515 && yy > 0.485 && yy < 0.515) {
+                if (changeDirClear) {
+                    if (moveQueue.peek() != null) {
+                        changeDirection(x, y);
                         logDebug("Polled move |"+currentDirection+"|");
+                    } else {
+                        // Generate A* path
+
+                        final List<Node> openList = new ArrayList<Node>();
+                        boolean[][] closedMap = new boolean[MAP_M][MAP_M];
+                        openList.add(new Node(null, x, y, Math.abs(x-px)+Math.abs(y-px), null));
+
+                        Node result = null;
+
+                        for (int iterations = 0; openList.size() > 0 && iterations < PATHFINDING_ACCURACY; iterations++) {
+
+                            // Find the (open) node with the lowest f value, and move it to the closed list
+                            int minIndex = 0;
+                            for (int i = 0; i < openList.size(); i++) {
+                                if (openList.get(i).f < openList.get(minIndex).f) {
+                                    minIndex = i;
+                                }
+                            }
+                            final Node focus = openList.get(minIndex);
+                            closedMap[focus.x][focus.y] = true;
+                            openList.remove(minIndex);
+
+                            if (focus.x == px && focus.y == py) { // Target aquired
+                                result = focus;
+                                logDebug("Found after "+iterations+" iterations");
+                                break;
+                            }
+
+                            // Gen chillren
+                            // Ensure next tile is: in bounds, not a wall, and hasn't already been iterated over
+                            if (focus.y-1 >= 0 && map[focus.x][focus.y-1] != null && !closedMap[focus.x][focus.y-1]) { // UP
+                                openList.add(new Node(focus, focus.x, focus.y-1,
+                                /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y-1-x) +
+                                /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y-1-px),
+                                KeyCode.UP));
+                            }
+                            if (focus.y+1 < MAP_M && map[focus.x][focus.y+1] != null && !closedMap[focus.x][focus.y+1]) { // DOWN
+                                openList.add(new Node(focus, focus.x, focus.y+1,
+                                /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y+1-x) +
+                                /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y+1-px),
+                                KeyCode.DOWN));
+                            }
+                            if (focus.x-1 >= 0 && map[focus.x-1][focus.y] != null && !closedMap[focus.x-1][focus.y]) { // LEFT
+                                openList.add(new Node(focus, focus.x-1, focus.y,
+                                /* from home */ Math.abs(focus.x-1-x)+Math.abs(focus.y-x) +
+                                /* from target */ Math.abs(focus.x-1-px)+Math.abs(focus.y-px),
+                                KeyCode.LEFT));
+                            }
+                            if (focus.x+1 < MAP_M  && map[focus.x+1][focus.y] != null && !closedMap[focus.x+1][focus.y]) { // RIGHT
+                                openList.add(new Node(focus, focus.x+1, focus.y,
+                                /* from home */ Math.abs(focus.x+1-x)+Math.abs(focus.y-x) +
+                                /* from target */ Math.abs(focus.x+1-px)+Math.abs(focus.y-px),
+                                KeyCode.RIGHT));
+                            }
+                        }
+
+                        // If we didn't reach the target before the iteration cap was hit, or there's no path, just get the "closets" one
+                        if (result == null) {
+                            int minIndex = 0;
+                            for (int i = 0; i < openList.size(); i++) {
+                                if (openList.get(i).f < openList.get(minIndex).f) {
+                                    minIndex = i;
+                                }
+                            }
+                            result = openList.get(minIndex);
+                        }
+
+                        // Going backwards, get KeyCodes as list
+                        List<KeyCode> sequence = new ArrayList<KeyCode>();
+                        while (result != null && result.direction != null) {
+                            sequence.add(result.direction);
+                            result = result.parent;
+                            // logDebug("----------------Adding -> "+result.direction+", is origin = "+(result.x == x && result.y == y));
+                        }
+
+
+                        // Going from the "start" of the path (the end of the sequence), record into memory
+                        int cap = sequence.size() - PATH_MEMORY;
+                        if (cap <= 0) {
+                            cap = sequence.size() - 2;
+                            if (cap <= 0) {
+                                cap = 0;
+                            }
+                        }
+                        for (int i = sequence.size()-1; i >= cap; i--) {
+                            // logDebug("Adding -> |"+sequence.get(i)+"|");
+                            moveQueue.add(sequence.get(i));
+                        }
+                        // moveQueue.add(sequence.get(sequence.size()-1));
+
+                        changeDirection(x, y);
+                        logDebug("Polled move at END |"+currentDirection+"|");
+
+                        logDebug("Found path; length = "+sequence.size()+" from ("+x+", "+y+") to ("+px+", "+py+")");
                     }
-                } else {
-                    changeDirClear = true;
                 }
             } else {
-
-                // Generate A* path
-
-                final int
-                px = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
-                py = (int)(playerDisplay.getCenterY()/RATIO);
-
-                final List<Node> openList = new ArrayList<Node>();
-                boolean[][] closedMap = new boolean[MAP_M][MAP_M];
-                openList.add(new Node(null, x, y, Math.abs(x-px)+Math.abs(y-px), null));
-
-                Node result = null;
-
-                for (int iterations = 0; openList.size() > 0 && iterations < PATHFINDING_ACCURACY; iterations++) {
-
-                    // Find the (open) node with the lowest f value, and move it to the closed list
-                    int minIndex = 0;
-                    for (int i = 0; i < openList.size(); i++) {
-                        if (openList.get(i).f < openList.get(minIndex).f) {
-                            minIndex = i;
-                        }
-                    }
-                    final Node focus = openList.get(minIndex);
-                    closedMap[focus.x][focus.y] = true;
-                    openList.remove(minIndex);
-
-                    if (focus.x == px && focus.y == py) { // Target aquired
-                        result = focus;
-                        logDebug("Found after "+iterations+" iterations");
-                        break;
-                    }
-
-                    // Gen chillren
-                    // Ensure next tile is: in bounds, not a wall, and hasn't already been iterated over
-                    if (focus.y-1 >= 0 && map[focus.x][focus.y-1] != null && !closedMap[focus.x][focus.y-1]) { // UP
-                        openList.add(new Node(focus, focus.x, focus.y-1,
-                        /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y-1-x) +
-                        /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y-1-px),
-                        KeyCode.UP));
-                    }
-                    if (focus.y+1 < MAP_M && map[focus.x][focus.y+1] != null && !closedMap[focus.x][focus.y+1]) { // DOWN
-                        openList.add(new Node(focus, focus.x, focus.y+1,
-                        /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y+1-x) +
-                        /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y+1-px),
-                        KeyCode.DOWN));
-                    }
-                    if (focus.x-1 >= 0 && map[focus.x-1][focus.y] != null && !closedMap[focus.x-1][focus.y]) { // LEFT
-                        openList.add(new Node(focus, focus.x-1, focus.y,
-                        /* from home */ Math.abs(focus.x-1-x)+Math.abs(focus.y-x) +
-                        /* from target */ Math.abs(focus.x-1-px)+Math.abs(focus.y-px),
-                        KeyCode.LEFT));
-                    }
-                    if (focus.x+1 < MAP_M  && map[focus.x+1][focus.y] != null && !closedMap[focus.x+1][focus.y]) { // RIGHT
-                        openList.add(new Node(focus, focus.x+1, focus.y,
-                        /* from home */ Math.abs(focus.x+1-x)+Math.abs(focus.y-x) +
-                        /* from target */ Math.abs(focus.x+1-px)+Math.abs(focus.y-px),
-                        KeyCode.RIGHT));
-                    }
-                }
-
-                // If we didn't reach the target before the iteration cap was hit, or there's no path, just get the "closets" one
-                if (result == null) {
-                    int minIndex = 0;
-                    for (int i = 0; i < openList.size(); i++) {
-                        if (openList.get(i).f < openList.get(minIndex).f) {
-                            minIndex = i;
-                        }
-                    }
-                    result = openList.get(minIndex);
-                }
-
-                // Going backwards, get KeyCodes as list
-                List<KeyCode> sequence = new ArrayList<KeyCode>();
-                while (result.parent != null && result.parent.direction != null) {
-                    result = result.parent;
-                    sequence.add(result.direction);
-                    // logDebug("----------------Adding -> "+result.direction+", is origin = "+(result.x == x && result.y == y));
-                }
-
-
-                // Going from the "start" of the path (the end of the sequence), record into memory
-                int cap = sequence.size() - PATH_MEMORY;
-                if (cap <= 0) {
-                    cap = sequence.size() - 2;
-                    if (cap <= 0) {
-                        cap = 0;
-                    }
-                }
-                for (int i = sequence.size()-1; i >= cap; i--) {
-                    // logDebug("Adding -> |"+sequence.get(i)+"|");
-                    moveQueue.add(sequence.get(i));
-                }
-                // moveQueue.add(sequence.get(sequence.size()-1));
-
-                changeDirClear = false;
-                currentDirection = moveQueue.poll();
-                display.setCenterX((x+0.5) * RATIO);
-                display.setCenterY((y+0.5) * RATIO);
-                logDebug("Polled move at END |"+currentDirection+"|");
-
-                logDebug("Found path; length = "+sequence.size()+" from ("+x+", "+y+") to ("+px+", "+py+")");
-
-                /*
-                final int choice = random.nextInt(4);
-                switch (choice) {
-                    case 0: moveQueue.add(KeyCode.UP); break;
-                    case 1: moveQueue.add(KeyCode.DOWN); break;
-                    case 2: moveQueue.add(KeyCode.LEFT); break;
-                    case 3: moveQueue.add(KeyCode.RIGHT); break;
-                }
-                logDebug("change course to "+moveQueue.peek());
-                */
+                changeDirClear = true;
             }
+        }
+
+        private void changeDirection(int gridX, int gridY) {
+            changeDirClear = false;
+            currentDirection = moveQueue.poll();
+            if (currentDirection == null) currentDirection = KeyCode.P; // P for paused
+            display.setCenterX((gridX+0.5) * RATIO);
+            display.setCenterY((gridY+0.5) * RATIO);
         }
 
         private static class Node {

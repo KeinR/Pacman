@@ -23,8 +23,10 @@ import static net.keinr.util.Ansi.RED;
 import static net.keinr.util.Ansi.MAGENTA;
 import static net.keinr.util.Ansi.BLUE;
 import static net.keinr.util.Ansi.RESET;
+import static net.keinr.util.Ansi.BR_GREEN;
 
 import static net.keinr.util.Debug.logDebug;
+import static net.keinr.util.Debug.fDebug;
 
 class Engine {
     // Moddable constants
@@ -33,9 +35,8 @@ class Engine {
     private static final double GHOST_SPEED = 0.4; // How fast the ghosts moves in pixels/tick
     private static final double DOT_COLLECTION_DIST = 0.1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
     private static final int GHOST_COUNT = 1; // # of ghosts. Doesn't depend on spawnpoint availability, as they can stack if there's overflow
-    private static final int PATHFINDING_ACCURACY = 1000; // Max A* iterations used to find a valid path to the target from ghost.
     private static final int PATH_MEMORY = 3; // How many moves a ghost will remember after an A* run. Higher numbers will make it harder for the ghosts to track a moving player
-    private static final int TRACKING_TIME = 5000; // How long a ghost will chase the player after spotting it (milliseconds)
+    private static final int TRACKING_TIME = 50000; // How long a ghost will chase the player after spotting it (milliseconds)
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -43,6 +44,7 @@ class Engine {
     private static final int ESP_DEC = 16711684; // Enemy spawn point color representation in base 10
     private static final int MAP_M = 20; // X/Y-length of tile matrix
     private static final double RATIO = 400/MAP_M; // Grid to pixels ratio
+    private static final int PATHFINDING_ITER_CAP = 1000; // Max A* iterations used to find a valid path to the target from ghost.
 
     private static final Timeline cycleControl = new Timeline(new KeyFrame(Duration.millis(TICK_INTERVAL), e -> cycle()));
     private static final Random random = new Random();
@@ -315,11 +317,11 @@ class Engine {
     }
 
     private static class Ghost {
-        private final Deque<KeyCode> moveQueue = new ArrayDeque<KeyCode>();
+        private Deque<KeyCode> moveQueue = new ArrayDeque<KeyCode>();
         private KeyCode currentDirection = KeyCode.P;
         private final Circle display = new Circle(RATIO/3, Color.RED);
         private boolean alive = true, changeDirClear = true;
-        private int trackingTime = 0, sinceLastTrack = 0;
+        private int trackingTime = 0;
         private Tile trackedRandomTile;
         private Ghost() {}
 
@@ -336,7 +338,9 @@ class Engine {
         private void move() {
             final int
             x = (int)(display.getCenterX()/RATIO),
-            y = (int)(display.getCenterY()/RATIO); // Grid x/y values for ghost
+            y = (int)(display.getCenterY()/RATIO), // Grid x/y values for ghost
+            pxf = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
+            pyf = (int)(playerDisplay.getCenterY()/RATIO);
 
             double dist;
             switch (currentDirection) {
@@ -385,97 +389,157 @@ class Engine {
             double xx = display.getCenterX()/RATIO - x;
             double yy = display.getCenterY()/RATIO - y;
             if (xx > 0.485 && xx < 0.515 && yy > 0.485 && yy < 0.515) {
-                int
-                px = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
-                py = (int)(playerDisplay.getCenterY()/RATIO);
 
-                if (changeDirClear && (x != px || y != py)) {
+                if (changeDirClear && (x != pxf || y != pyf)) {
+
                     if (moveQueue.peek() != null) {
                         changeDirection(x, y);
                         logDebug("Polled move |"+currentDirection+"|");
                     } else {
 
+                        int px, py;
                         // If the ghost has lost track of the player, have the ghost move wander to a random tile
-                        if (trackingTime <= 0) {
-                            boolean canSeePlayer = playerInView(x, y, px, py);
-                            if (!canSeePlayer) {
-                                if (trackedRandomTile == null || (x == trackedRandomTile.x && y == trackedRandomTile.y)) {
-                                    // Search for an open random tile to wander to
-                                    while (map[(px = random.nextInt(MAP_M))][(py = random.nextInt(MAP_M))] == null) {}
-                                    trackedRandomTile = map[px][py];
-                                    logDebug(BLUE+"New target -> ("+px+", "+py+")"+RESET);
-                                } else {
-                                    px = trackedRandomTile.x;
-                                    py = trackedRandomTile.y;
-                                }
-                                logDebug("Tracking random -> ("+px+", "+py+")");
+                        if (trackingTime <= 0 /* DEBUG */ && false /* END DEBUG */) { // STATEMENT DISABLED FOR DEBUG
+                            if (trackedRandomTile == null || (x == trackedRandomTile.x && y == trackedRandomTile.y)) {
+                                // Search for an open random tile to wander to
+                                while (map[(px = random.nextInt(MAP_M))][(py = random.nextInt(MAP_M))] == null) {}
+                                trackedRandomTile = map[px][py];
+                                logDebug(BLUE+"New target -> ("+px+", "+py+")"+RESET);
                             } else {
-                                trackingTime = TRACKING_TIME;
-                                System.out.println("+++++++PLAYER SPOTTED++++++++++");
+                                px = trackedRandomTile.x;
+                                py = trackedRandomTile.y;
                             }
+                            logDebug("Tracking random -> ("+px+", "+py+")");
                         } else {
-                            trackingTime -= sinceLastTrack;
-                            sinceLastTrack = 0;
-                            logDebug(RED+"Tracking player~"+trackingTime+RESET);
+                            px = pxf;
+                            py = pyf;
                         }
 
                         // Generate A* path
 
                         final List<Node> openList = new ArrayList<Node>();
                         boolean[][] closedMap = new boolean[MAP_M][MAP_M];
-                        openList.add(new Node(null, x, y, Math.abs(x-px)+Math.abs(y-px), null));
+                        openList.add(new Node(null, x, y, 0, Math.abs(x-px)+Math.abs(y-px), null));
+                        closedMap[x][y] = true;
 
                         Node result = null;
 
-                        for (int iterations = 0; openList.size() > 0 && iterations < PATHFINDING_ACCURACY; iterations++) {
+                        for (int iterations = 0; openList.size() > 0 && iterations < PATHFINDING_ITER_CAP; iterations++) {
 
                             // Find the (open) node with the lowest f value, and move it to the closed list
-                            int minIndex = 0;
-                            for (int i = 0; i < openList.size(); i++) {
-                                if (openList.get(i).f < openList.get(minIndex).f) {
-                                    minIndex = i;
+                            Node focus = openList.get(0);
+                            for (Node node : openList) {
+                                if (node.f < focus.f) {
+                                    focus = node;
                                 }
                             }
-                            final Node focus = openList.get(minIndex);
+                            System.out.print("("+focus.x+", "+focus.y+") ");
+                            // if (openList.remove(minIndex) == null) {
+                            //     logDebug(RED+"FAILED TO REMOVE NODE"+RESET);
+                            // }
                             closedMap[focus.x][focus.y] = true;
-                            openList.remove(minIndex);
+                            openList.remove(focus);
 
                             if (focus.x == px && focus.y == py) { // Target aquired
                                 result = focus;
-                                logDebug(MAGENTA+"Found at ("+focus.x+", "+focus.y+") after "+iterations+" iterations"+RESET);
+                                logDebug(MAGENTA+
+                                "Found at ("+focus.x+", "+focus.y+") from ("+x+", "+y+") after "+iterations+" iterations"+RESET+", after tile ("+focus.parent.x+", "+focus.parent.y+")");
                                 break;
+                            }
+
+                            final boolean goLog = focus.x == 16 && focus.y == 18;
+                            if (goLog) {
+                                logDebug(MAGENTA+" FOUND TARGET: ");
                             }
 
                             // Gen chillren
                             // Ensure next tile is: in bounds, not a wall, and hasn't already been iterated over
+                            int tScore = focus.c + 1;
                             if (focus.y-1 >= 0 && map[focus.x][focus.y-1] != null && !closedMap[focus.x][focus.y-1]) { // UP
-                                openList.add(new Node(focus, focus.x, focus.y-1,
-                                /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y-1-x) +
-                                /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y-1-px),
-                                KeyCode.UP));
+                                boolean inOpenList = false;
+                                for (Node node : openList) {
+                                    if (node.x == focus.x && node.y == focus.y-1) {
+                                        if (node.c < tScore) {
+                                            node.setParent(focus);
+                                        }
+                                        System.out.println("\n"+MAGENTA+" ("+(focus.y-1)+", "+focus.x+") IS IN LIST "+RESET);
+                                        inOpenList = true;
+                                        break;
+                                    }
+                                }
+                                if (!inOpenList) {
+                                    openList.add(new Node(focus, focus.x, focus.y-1, 
+                                    tScore,
+                                    Math.abs(focus.x-px)+Math.abs(focus.y-1-px), KeyCode.UP));
+                                }
+                                if (goLog) System.out.print("0 ");
                             }
                             if (focus.y+1 < MAP_M && map[focus.x][focus.y+1] != null && !closedMap[focus.x][focus.y+1]) { // DOWN
-                                openList.add(new Node(focus, focus.x, focus.y+1,
-                                /* from home */ Math.abs(focus.x-x)+Math.abs(focus.y+1-x) +
-                                /* from target */ Math.abs(focus.x-px)+Math.abs(focus.y+1-px),
-                                KeyCode.DOWN));
+                                boolean inOpenList = false;
+                                for (Node node : openList) {
+                                    if (node.x == focus.x && node.y == focus.y+1) {
+                                        if (node.c < tScore) {
+                                            node.setParent(focus);
+                                        }
+                                        System.out.println("\n"+MAGENTA+" ("+(focus.y+1)+", "+focus.x+") IS IN LIST "+RESET);
+                                        inOpenList = true;
+                                        break;
+                                    }
+                                }
+                                if (!inOpenList) {
+                                    openList.add(new Node(focus, focus.x, focus.y+1,
+                                    tScore,
+                                    Math.abs(focus.x-px)+Math.abs(focus.y+1-px), KeyCode.DOWN));
+                                    closedMap[focus.x][focus.y+1] = true;
+                                }
+                                if (goLog) System.out.print("1 ");
                             }
                             if (focus.x-1 >= 0 && map[focus.x-1][focus.y] != null && !closedMap[focus.x-1][focus.y]) { // LEFT
-                                openList.add(new Node(focus, focus.x-1, focus.y,
-                                /* from home */ Math.abs(focus.x-1-x)+Math.abs(focus.y-x) +
-                                /* from target */ Math.abs(focus.x-1-px)+Math.abs(focus.y-px),
-                                KeyCode.LEFT));
+                                boolean inOpenList = false;
+                                for (Node node : openList) {
+                                    if (node.x == focus.x-1 && node.y == focus.y) {
+                                        if (node.c < tScore) {
+                                            node.setParent(focus);
+                                        }
+                                        System.out.println("\n"+MAGENTA+" ("+focus.y+", "+(focus.x-1)+") IS IN LIST "+RESET);
+                                        inOpenList = true;
+                                        break;
+                                    }
+                                }
+                                if (!inOpenList) {
+                                    openList.add(new Node(focus, focus.x-1, focus.y, 
+                                    tScore, 
+                                    Math.abs(focus.x-1-px)+Math.abs(focus.y-px), KeyCode.LEFT));
+                                    closedMap[focus.x-1][focus.y] = true;
+                                }
+                                if (goLog) System.out.print("2 ");
                             }
                             if (focus.x+1 < MAP_M  && map[focus.x+1][focus.y] != null && !closedMap[focus.x+1][focus.y]) { // RIGHT
-                                openList.add(new Node(focus, focus.x+1, focus.y,
-                                /* from home */ Math.abs(focus.x+1-x)+Math.abs(focus.y-x) +
-                                /* from target */ Math.abs(focus.x+1-px)+Math.abs(focus.y-px),
-                                KeyCode.RIGHT));
+                                boolean inOpenList = false;
+                                for (Node node : openList) {
+                                    if (node.x == focus.x+1 && node.y == focus.y) {
+                                        if (node.c < tScore) {
+                                            node.setParent(focus);
+                                        }
+                                        System.out.println("\n"+MAGENTA+" ("+focus.y+", "+(focus.x+1)+") IS IN LIST "+RESET);
+                                        inOpenList = true;
+                                        break;
+                                    }
+                                }
+                                if (!inOpenList) {
+                                    openList.add(new Node(focus, focus.x+1, focus.y, 
+                                    tScore, 
+                                    Math.abs(focus.x+1-px)+Math.abs(focus.y-px), KeyCode.RIGHT));
+                                    closedMap[focus.x+1][focus.y] = true;
+                                }
+                                if (goLog) System.out.print("3 ");
                             }
+                            if (goLog) System.out.print(RESET.toString());
                         }
 
                         // If we didn't reach the target before the iteration cap was hit, or there's no path, just get the "closets" one
                         if (result == null) {
+                            logDebug(RED+"Launching contingency..."+RESET);
                             int minIndex = 0;
                             for (int i = 0; i < openList.size(); i++) {
                                 if (openList.get(i).f < openList.get(minIndex).f) {
@@ -494,18 +558,32 @@ class Engine {
 
 
                         // Going from the "start" of the path (the end of the sequence), record into memory
-                        int cap = sequence.size() - 1 - PATH_MEMORY;
-                        if (cap <= 0) {
-                            cap = sequence.size() - 2;
+                        int cap;
+                        if (trackingTime > 0 /* DEBUG */ || true /* END DEBUG */) { // UNCONDITIONALLY ENABLED FOR DEBUG
+                            cap = sequence.size() - 1 - PATH_MEMORY;
                             if (cap <= 0) {
-                                cap = 0;
+                                cap = sequence.size() - 2;
+                                if (cap <= 0) {
+                                    cap = 0;
+                                }
                             }
+                        } else {
+                            cap = 0;
                         }
                         for (int i = sequence.size()-1; i >= cap; i--) {
                             logDebug("Adding -> |"+sequence.get(i)+"|");
                             moveQueue.add(sequence.get(i));
                         }
                         // moveQueue.add(sequence.get(sequence.size()-1));
+
+                        fDebug(() -> {
+                            if (trackingTime > 0) {
+                                System.out.println("Sequence:");
+                                for (int i = sequence.size()-1; i >= 0; i--) {
+                                    System.out.println(sequence.get(i));
+                                }
+                            } else System.out.println("Not tracking.");
+                        });
 
                         changeDirection(x, y);
                         logDebug("Polled move at END |"+currentDirection+"|");
@@ -516,7 +594,20 @@ class Engine {
             } else {
                 changeDirClear = true;
             }
-            sinceLastTrack += TICK_INTERVAL;
+
+            if (trackingTime > 0) {
+                trackingTime -= TICK_INTERVAL;
+                // logDebug(RED+"Tracking player~"+trackingTime+RESET);
+            }
+
+            if (playerInView(x, y, pxf, pyf) /* DEBUG */ && false /* END DEBUG */) { // UNCONDITIONALLY DISABLED FOR DEBUG
+                if (trackingTime <= 0) {
+                    logDebug(RED+"Path reset"+RESET);
+                    moveQueue = new ArrayDeque<KeyCode>(); // Cancel queued path
+                }
+                trackingTime = TRACKING_TIME;
+                // logDebug("+++++++PLAYER SPOTTED++++++++++");
+            }
         }
 
         /**
@@ -562,15 +653,25 @@ class Engine {
         }
 
         private static class Node {
-            final Node parent;
-            final int x, y, f;
-            final KeyCode direction;
-            private Node(Node parent, int x, int y, int f, KeyCode direction) {
+            private Node parent;
+            private final int x, y, h; // x, y, & heuristic
+            private int c, f; // Cost & function
+            private final KeyCode direction;
+            private Node(Node parent, int x, int y, int c, int h, KeyCode direction) {
+                if (parent != null) System.out.print(BR_GREEN+" CREATING @("+x+", "+y+") with parent @("+parent.x+", "+parent.y+") "+RESET);
                 this.parent = parent;
                 this.x = x;
                 this.y = y;
-                this.f = f;
+                this.c = c;
+                this.h = h;
+                this.f = this.c + this.h;
                 this.direction = direction;
+            }
+            private void setParent(Node node) {
+                System.out.println("\n"+MAGENTA+"PARENT SWITCH"+RESET);
+                this.c = node.c + 1;
+                this.f = this.c + this.h;
+                this.parent = node;
             }
         }
     }

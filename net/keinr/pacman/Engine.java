@@ -1,30 +1,26 @@
 package net.keinr.pacman;
 
-import javafx.util.Duration;
-import javafx.animation.Timeline;
-import javafx.animation.KeyFrame;
 import javafx.scene.input.KeyCode;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import javax.imageio.ImageIO;
 import java.io.FileInputStream;
-
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
-
+import java.nio.charset.StandardCharsets;
 import java.util.Random;
 import java.util.List;
 import java.util.Deque;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 
+import net.keinr.util.TimedThread;
 import static net.keinr.util.Ansi.YELLOW;
 
 // Debug imports
@@ -34,7 +30,6 @@ import static net.keinr.util.Ansi.BLUE;
 import static net.keinr.util.Ansi.RESET;
 import static net.keinr.util.Ansi.BR_GREEN;
 import static net.keinr.util.Ansi.BR_BLUE;
-
 import static net.keinr.pacman.Main.logDebug;
 
 class Engine {
@@ -49,7 +44,7 @@ class Engine {
     private static final Path SAVE_DATA_PATH = Paths.get(".pacman"); // Location where high scores will be saved
     private static final int POINTS_PER_DOT = 1; // How many points the player gets for each dot picked up
     private static final String MAP_SOURCE = "resources/map.png"; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
-
+    private static final Color DOT_COLOR = Color.YELLOW; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -61,7 +56,7 @@ class Engine {
     private static final double PLAYER_RADIUS = RATIO/3; // radius of player
     private static final double GHOST_RADIUS = RATIO/3; // radius of ghosts
 
-    private static final Timeline cycleControl = new Timeline(new KeyFrame(Duration.millis(TICK_INTERVAL), e -> cycle()));
+    private static final TimedThread cycleControl = new TimedThread("cycle", TICK_INTERVAL, () -> cycle());
     private static final Random random = new Random();
     private static Tile[] enemySpawnpoints, playerSpawnpoints;
     private static Tile[][] map = new Tile[MAP_M][MAP_M];
@@ -123,7 +118,6 @@ class Engine {
                 start();
             }
         });
-        cycleControl.setCycleCount(Timeline.INDEFINITE);
 
         // Load map
         try {
@@ -213,6 +207,8 @@ class Engine {
             }
         }
 
+        cycleControl.start();
+
         // start(); // TEMP
     }
 
@@ -236,7 +232,6 @@ class Engine {
         logDebug("Added player");
 
         playerDirection = KeyCode.P; // Starts paused
-        cycleControl.play();
         Interface.setStartGame();
 
         score = 0;
@@ -246,9 +241,7 @@ class Engine {
     }
 
     static void stop() {
-        // Interface.remove(playerDisplay);
         Interface.setGameOver();
-        cycleControl.stop();
         save();
         logDebug("Game over, so sad...");
         gameOver = true;
@@ -276,7 +269,7 @@ class Engine {
     }
 
     private static void cycle() {
-        if (!paused) {
+        if (!paused && !gameOver) {
             final int x = (int)(playerDisplay.getCenterX()/RATIO);
             final int y = (int)(playerDisplay.getCenterY()/RATIO);
             double dist;
@@ -358,7 +351,7 @@ class Engine {
         private Tile(int x, int y) {
             this.x = x;
             this.y = y;
-            this.display = new Circle(x*RATIO+RATIO/2, y*RATIO+RATIO/2, RATIO/6);
+            this.display = new Circle(x*RATIO+RATIO/2, y*RATIO+RATIO/2, RATIO/6, DOT_COLOR);
             Interface.add(this.display);
         }
         private void setCollected(boolean addScore) {

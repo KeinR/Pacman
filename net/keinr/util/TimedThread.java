@@ -1,9 +1,11 @@
 package net.keinr.util;
 
 import java.lang.InterruptedException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 
 /**
- * A class used for creating schedualed tasks.
+ * A class used for running tasks at specified intervals
  * 
  * @author Orion Musselman (KeinR)
  * @version 1.0.0
@@ -12,10 +14,13 @@ import java.lang.InterruptedException;
 public class TimedThread implements Runnable {
     private static int idLevel = 0;
 
-    private boolean running;
     private long interval;
     private Runnable function;
-    private final Thread thread;
+    private String name;
+
+    private Thread currentThread;
+    private boolean threadRunning = false;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(this::threadBuilder);
 
     /**
      * Create a new TimedThread object
@@ -23,10 +28,11 @@ public class TimedThread implements Runnable {
      * @param interval how often the thread will run in milliseconds
      * @param function and extension of the Runnable interface that will be called at the end of each interval
      */
-    TimedThread(String name, long interval, Runnable function) {
+    public TimedThread(String name, int interval, Runnable function) {
         this.function = function;
-        this.interval = interval;
-        this.thread = new Thread(this, name);
+        // I do this because I will never need to pause execution of a thread for more than 22 or so days, so taking long parameters is really quite excessive
+        this.interval = (long)interval;
+        this.name = name;
     }
 
     /**
@@ -34,10 +40,10 @@ public class TimedThread implements Runnable {
      * @param interval how often the thread will run in milliseconds
      * @param function and extension of the Runnable interface that will be called at the end of each interval
      */
-    TimedThread(long interval, Runnable function) {
+    public TimedThread(int interval, Runnable function) {
         this.function = function;
-        this.interval = interval;
-        this.thread = new Thread(this, "TimedThread#"+(idLevel++));
+        this.interval = (long)interval;
+        this.name = "TimedThread#"+(idLevel++);
     }
 
     /**
@@ -50,7 +56,16 @@ public class TimedThread implements Runnable {
      * Sets a new interval
      * @param interval how often to call the function, in milliseconds
      */
-    public void setInterval(long interval) { this.interval = interval; }
+    public void setInterval(int interval) { this.interval = (long)interval; }
+
+    /**
+     * Gives the thread and all future versions a new name
+     * @param name the new name
+     */
+    public void setName(String name) {
+        this.name = name;
+        this.currentThread.setName(name);
+    }
 
     /** 
      * Gets the currently used function
@@ -68,23 +83,27 @@ public class TimedThread implements Runnable {
      * Get if the thread is currently running
      * @return true if the thread is running
      */
-    public boolean isRunning() {
-        return thread.isAlive();
-    }
+    public boolean isRunning() { return threadRunning; }
 
     /**
      * Start the thread
-     * @throws IllegalThreadStateException (uncaught) if the thread is already running
+     * @throws IllegalThreadStateException if the thread is still running
      */
     public void start() {
-        thread.start();
+        if (threadRunning) throw new IllegalThreadStateException("Thread is running");
+        executor.execute(this);
+        threadRunning = true;
     }
 
     /**
      * Stop the thread
      */
     public void stop() {
-        thread.interrupt();
+        // I use Thread#interrupt() instead of using a boolean flag in the class so that if the sleep time is long, I can use the
+        // InterruptedException to wake up the thread and have it exit
+        currentThread.interrupt();
+        // I have a second boolean flag so I don't have to check for null
+        threadRunning = false;
     }
 
     /**
@@ -95,12 +114,23 @@ public class TimedThread implements Runnable {
     @Override
     public void run() {
         try {
-            while (!Thread.currentThread().interrupted()) {
+            while (!Thread.currentThread().isInterrupted()) {
                 Thread.sleep(interval);
                 function.run();
             }
         } catch (InterruptedException e) {
-            // Exit thread
+            // Wake up and exit thread
         }
+    }
+
+    /**
+     * Used by the ExecutorService to create new threads
+     * @param r the given Runnable
+     * @return the created Thread
+     */
+    private Thread threadBuilder(Runnable r) {
+        Thread thread = new Thread(r, name);
+        currentThread = thread;
+        return thread;
     }
 }

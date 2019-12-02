@@ -105,6 +105,18 @@ class Interface {
         Platform.runLater(() -> entityRoot.getChildren().add(node));
     }
 
+    static void addAllEntity(Node... nodes) {
+        Platform.runLater(() -> entityRoot.getChildren().addAll(nodes));
+    }
+
+    // static void removeEntity(Node node) {
+    //     Platform.runLater(() -> entityRoot.getChildren().remove(node));
+    // }
+
+    static void removeAllEntity(Node... nodes) {
+        Platform.runLater(() -> entityRoot.getChildren().removeAll(nodes));
+    }
+
     static void addBackground(Node node) {
         Platform.runLater(() -> backgroundRoot.getChildren().add(node));
     }

@@ -8,7 +8,7 @@ import java.util.concurrent.ExecutorService;
  * A class used for running tasks at specified intervals
  * 
  * @author Orion Musselman (KeinR)
- * @version 1.0.0
+ * @version 1.0.1
  */
 
 public class TimedThread implements Runnable {
@@ -20,7 +20,7 @@ public class TimedThread implements Runnable {
 
     private Thread currentThread;
     private boolean threadRunning = false;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(this::threadBuilder);
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(this::threadFactory);
 
     /**
      * Create a new TimedThread object
@@ -87,18 +87,20 @@ public class TimedThread implements Runnable {
 
     /**
      * Start the thread
-     * @throws IllegalThreadStateException if the thread is still running
+     * @throws IllegalTimedThreadStateException if the thread IS still running
      */
     public void start() {
-        if (threadRunning) throw new IllegalThreadStateException("Thread is running");
+        if (threadRunning) throw new IllegalTimedThreadStateException("Thread is running");
         executor.execute(this);
         threadRunning = true;
     }
 
     /**
      * Stop the thread
+     * @throws IllegalTimedThreadStateException if the thread ISN'T still running
      */
     public void stop() {
+        if (!threadRunning) throw new IllegalTimedThreadStateException("No Thread is running");
         // I use Thread#interrupt() instead of using a boolean flag in the class so that if the sleep time is long, I can use the
         // InterruptedException to wake up the thread and have it exit
         currentThread.interrupt();
@@ -128,7 +130,7 @@ public class TimedThread implements Runnable {
      * @param r the given Runnable
      * @return the created Thread
      */
-    private Thread threadBuilder(Runnable r) {
+    private Thread threadFactory(Runnable r) {
         Thread thread = new Thread(r, name);
         currentThread = thread;
         return thread;

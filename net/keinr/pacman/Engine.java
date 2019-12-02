@@ -8,6 +8,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.image.Image;
 import javafx.scene.shape.Arc;
 import javafx.scene.shape.ArcType;
+// import javafx.scene.Node;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -48,9 +49,12 @@ class Engine {
     private static final Path SAVE_DATA_PATH = Paths.get(".pacman"); // Location where high scores will be saved
     private static final int POINTS_PER_DOT = 1; // How many points the player gets for each dot picked up
     private static final String MAP_SOURCE = "resources/map.png"; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
-    private static final Color DOT_COLOR = Color.YELLOW; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
+    private static final Color DOT_COLOR = Color.YELLOW; // Normal dot color
+    private static final Color DOT_COLOR_SUPER = Color.CYAN; // Super dot color
     private static final int JAW_SPEED = 5; // How fast the player's jaw opens and closes
     private static final int JAW_MAX = 40; // Max degrees the player's jaw can open
+    private static final int SUPER_MODE_LENGTH = 10000; // How long a player's super mode lasts
+    private static final int STAR_SPAWN_CHANCE = 5; // % chance that a star will spawn on a tile
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -66,16 +70,17 @@ class Engine {
     private static Tile[] enemySpawnpoints, playerSpawnpoints;
     private static Tile[][] map = new Tile[MAP_M][MAP_M];
     private static Ghost[] ghosts = new Ghost[GHOST_COUNT];
-    private static Image ghostSprite;
+    private static Image ghostSprite, starSprite;
 
     private static volatile boolean gameOver = true, paused = false;
-    private static volatile int score, highScore;
+    private static int score, highScore;
 
     // Player related stuff
     private static volatile KeyCode playerDirection, queuedPlayerDirection;
     private static final Arc playerDisplay = new Arc(-10, -10, ENTITY_RADIUS, ENTITY_RADIUS, 40, 300);
     private static boolean openingJaw = false;
     private static double mouthOpenSS = 10;
+    private static int superModeDuration = 0;
 
     static void setup() {
         Interface.setOnKeyPressed(e -> {
@@ -188,6 +193,7 @@ class Engine {
             }
 
             ghostSprite = new Image(new FileInputStream("resources/sprites/ghost.png"));
+            starSprite = new Image(new FileInputStream("resources/sprites/star.png"));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -219,8 +225,6 @@ class Engine {
         }
 
         cycleControl.start();
-
-        // start(); // TEMP
     }
 
     static void start() {
@@ -239,7 +243,6 @@ class Engine {
         map[spawnpoint.x][spawnpoint.y].setCollected(false);
         playerDisplay.setCenterX(spawnpoint.x*RATIO+RATIO/2);
         playerDisplay.setCenterY(spawnpoint.y*RATIO+RATIO/2);
-        // Interface.add(playerDisplay);
         logDebug("Added player");
 
         playerDirection = KeyCode.P; // Starts paused
@@ -258,7 +261,7 @@ class Engine {
         gameOver = true;
     }
 
-    private static synchronized void addScore(int value) {
+    private static void addScore(int value) {
         score += value;
         Interface.setScore(score);
         if (score > highScore) {
@@ -376,7 +379,22 @@ class Engine {
                 }
             }
             for (Ghost ghost : ghosts) ghost.move();
+
+            if (superModeDuration > 0) {
+                superModeDuration -= TICK_INTERVAL;
+            } else if (superModeDuration < 0) {
+                exitSupermode();
+                superModeDuration = 0;
+            }
         }
+    }
+
+    private static void enterSupermode() {
+
+    }
+
+    private static void exitSupermode() {
+
     }
 
     private static void recenterPlayer(int gridX, int gridY) {
@@ -388,27 +406,31 @@ class Engine {
         private final int x, y;
         private boolean collected = false;
         private final Circle display;
+        private final int pointValue;
         private Tile(int x, int y) {
             this.x = x;
             this.y = y;
-            this.display = new Circle(x*RATIO+RATIO/2, y*RATIO+RATIO/2, RATIO/6, DOT_COLOR);
+            this.display = new Circle(x*RATIO+RATIO/2, y*RATIO+RATIO/2, RATIO/6);
+            if (random.nextInt(101) <= STAR_SPAWN_CHANCE) {
+                this.pointValue = 10*POINTS_PER_DOT;
+                this.display.setFill(DOT_COLOR_SUPER);
+            } else {
+                this.pointValue = POINTS_PER_DOT;
+                this.display.setFill(DOT_COLOR);
+            }
             Interface.add(this.display);
         }
         private void setCollected(boolean addScore) {
             if (!collected) {
-                if (addScore) addScore(POINTS_PER_DOT);
+                if (addScore) addScore(pointValue);
                 collected = true;
                 Interface.remove(display);
             }
         }
         private void reset() {
             collected = false;
-            Interface.remove(this.display); // Making sure that the node isn't already listed as a precaution against IllegalArgumentException
+            Interface.remove(this.display); // Making sure that the node isn't already listed
             Interface.add(this.display);
-        }
-        @Override
-        protected Tile clone() {
-            return new Tile(x, y);
         }
     }
 
@@ -420,8 +442,6 @@ class Engine {
         private int trackingTime;
         private Tile trackedRandomTile;
         private Ghost() {
-            display.setFitHeight(ENTITY_RADIUS*2);
-            display.setFitWidth(ENTITY_RADIUS*2);
             Interface.addEntity(display);
         }
 
@@ -760,6 +780,13 @@ class Engine {
     private static class ImageViewB extends ImageView {
         private ImageViewB(Image image) {
             super(image);
+            setFitHeight(ENTITY_RADIUS*2);
+            setFitWidth(ENTITY_RADIUS*2);
+        }
+        private ImageViewB(Image image, double centerX, double centerY) {
+            super(image);
+            setCenterX(centerX);
+            setCenterY(centerY);
         }
         private double getCenterX() {
             return getX()+ENTITY_RADIUS;

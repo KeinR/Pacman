@@ -4,6 +4,10 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.image.ImageView;
+import javafx.scene.image.Image;
+import javafx.scene.shape.Arc;
+import javafx.scene.shape.ArcType;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -45,6 +49,8 @@ class Engine {
     private static final int POINTS_PER_DOT = 1; // How many points the player gets for each dot picked up
     private static final String MAP_SOURCE = "resources/map.png"; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
     private static final Color DOT_COLOR = Color.YELLOW; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
+    private static final int JAW_SPEED = 5; // How fast the player's jaw opens and closes
+    private static final int JAW_MAX = 40; // Max degrees the player's jaw can open
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -53,21 +59,23 @@ class Engine {
     private static final int MAP_M = 20; // X/Y-length of tile matrix
     private static final double RATIO = 400/MAP_M; // Grid to pixels ratio
     private static final int PATHFINDING_ITER_CAP = 1000; // Absolute max A* iterations used to find a valid path to the target from ghost.
-    private static final double PLAYER_RADIUS = RATIO/3; // radius of player
-    private static final double GHOST_RADIUS = RATIO/3; // radius of ghosts
+    private static final double ENTITY_RADIUS = RATIO/3; // radius of player & ghosts
 
     private static final TimedThread cycleControl = new TimedThread("cycle", TICK_INTERVAL, () -> cycle());
     private static final Random random = new Random();
     private static Tile[] enemySpawnpoints, playerSpawnpoints;
     private static Tile[][] map = new Tile[MAP_M][MAP_M];
     private static Ghost[] ghosts = new Ghost[GHOST_COUNT];
+    private static Image ghostSprite;
 
     private static volatile boolean gameOver = true, paused = false;
     private static volatile int score, highScore;
 
     // Player related stuff
     private static volatile KeyCode playerDirection, queuedPlayerDirection;
-    private static final Circle playerDisplay = new Circle();
+    private static final Arc playerDisplay = new Arc(-10, -10, ENTITY_RADIUS, ENTITY_RADIUS, 40, 300);
+    private static boolean openingJaw = false;
+    private static double mouthOpenSS = 10;
 
     static void setup() {
         Interface.setOnKeyPressed(e -> {
@@ -143,7 +151,7 @@ class Engine {
                         Rectangle rect = new Rectangle(x*RATIO, y*RATIO, RATIO, RATIO);
                         // String hex = Integer.toString(value, 16);
                         // hex = "0".repeat(6-hex.length())+hex;
-                        rect.setFill(Color.BLUE);
+                        rect.getStyleClass().add("wall");
                         Interface.addBackground(rect);
                     }
                 }
@@ -157,27 +165,29 @@ class Engine {
                     if (map[x][y] != null) {
                         if (x+1 < MAP_M && map[x+1][y] == null) {
                             Rectangle rect = new Rectangle(x*RATIO+RATIO, y*RATIO, RATIO*0.1, RATIO);
-                            rect.setFill(Color.BLACK);
+                            rect.getStyleClass().add("wallBorder");
                             Interface.addBackground(rect);
                         }
                         if (x-1 >= 0 && map[x-1][y] == null) {
                             Rectangle rect = new Rectangle(x*RATIO-RATIO*0.1, y*RATIO, RATIO*0.1, RATIO);
-                            rect.setFill(Color.BLACK);
+                            rect.getStyleClass().add("wallBorder");
                             Interface.addBackground(rect);
                         }
                         if (y+1 < MAP_M && map[x][y+1] == null) {
                             Rectangle rect = new Rectangle(x*RATIO, y*RATIO+RATIO, RATIO, RATIO*0.1);
-                            rect.setFill(Color.BLACK);
+                            rect.getStyleClass().add("wallBorder");
                             Interface.addBackground(rect);
                         }
                         if (y-1 >= 0 && map[x][y-1] == null) {
                             Rectangle rect = new Rectangle(x*RATIO, y*RATIO-RATIO*0.1, RATIO, RATIO*0.1);
-                            rect.setFill(Color.BLACK);
+                            rect.getStyleClass().add("wallBorder");
                             Interface.addBackground(rect);
                         }
                     }
                 }
             }
+
+            ghostSprite = new Image(new FileInputStream("resources/sprites/ghost.png"));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -187,7 +197,8 @@ class Engine {
             ghosts[i] = new Ghost();
         }
 
-        playerDisplay.setRadius(PLAYER_RADIUS);
+        playerDisplay.setId("player");
+        playerDisplay.setType(ArcType.ROUND);
         Interface.addEntity(playerDisplay);
 
         // Load save data
@@ -270,47 +281,76 @@ class Engine {
 
     private static void cycle() {
         if (!paused && !gameOver) {
+
             final int x = (int)(playerDisplay.getCenterX()/RATIO);
             final int y = (int)(playerDisplay.getCenterY()/RATIO);
             double dist;
+            boolean moved = false;
             switch (playerDirection) {
                 case UP:
                     dist = playerDisplay.getCenterY()/RATIO - y;
                     if (y-1 >= 0 && (map[x][y-1] != null || dist > 0.5)) {
+                        moved = true;
                         playerDisplay.setCenterY(playerDisplay.getCenterY()-PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && y < MAP_M) {
                             map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
+                    playerDisplay.setStartAngle(90+mouthOpenSS);
+                    playerDisplay.setLength(360-(mouthOpenSS*2));
                     break;
                 case DOWN:
                     dist = playerDisplay.getCenterY()/RATIO - y;
                     if (y+1 < MAP_M && (map[x][y+1] != null || dist < 0.5)) {
+                        moved = true;
                         playerDisplay.setCenterY(playerDisplay.getCenterY()+PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && y >= 0) {
                             map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
+                    playerDisplay.setStartAngle(270+mouthOpenSS);
+                    playerDisplay.setLength(360-(mouthOpenSS*2));
                     break;
                 case LEFT:
                     dist = playerDisplay.getCenterX()/RATIO - x;
-                    if (x-1 >= 0 && (map[x-1][y] != null || playerDisplay.getCenterX()/RATIO - (int)(playerDisplay.getCenterX()/RATIO) > 0.5)) {
+                    if (x-1 >= 0 && (map[x-1][y] != null || dist > 0.5)) {
+                        moved = true;
                         playerDisplay.setCenterX(playerDisplay.getCenterX()-PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && x < MAP_M) {
                             map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
+                    playerDisplay.setStartAngle(180+mouthOpenSS);
+                    playerDisplay.setLength(360-(mouthOpenSS*2));
                     break;
                 case RIGHT:
                     dist = playerDisplay.getCenterX()/RATIO - x;
                     if (x+1 < MAP_M && (map[x+1][y] != null || dist < 0.5)) {
+                        moved = true;
                         playerDisplay.setCenterX(playerDisplay.getCenterX()+PLAYER_SPEED);
                         if (dist > DOT_COLLECTION_DIST && x >= 0) {
                             map[x][y].setCollected(true);
                         }
                     } else recenterPlayer(x, y);
+                    playerDisplay.setStartAngle(mouthOpenSS);
+                    playerDisplay.setLength(360-(mouthOpenSS*2));
                     break;
                 // case P: // Do nothing
+            }
+            if (moved) {
+                if (mouthOpenSS < 0) {
+                    openingJaw = true;
+                    mouthOpenSS = 0;
+                } else if (mouthOpenSS > JAW_MAX) {
+                    openingJaw = false;
+                    mouthOpenSS = JAW_MAX;
+                } else if (openingJaw) {
+                    mouthOpenSS += JAW_SPEED;
+                } else {
+                    mouthOpenSS -= JAW_SPEED;
+                }
+            } else {
+                mouthOpenSS = JAW_MAX;
             }
             if (queuedPlayerDirection != null) {
                 double xx = playerDisplay.getCenterX()/RATIO - x;
@@ -375,11 +415,13 @@ class Engine {
     private static class Ghost {
         private Deque<KeyCode> moveQueue;
         private KeyCode currentDirection;
-        private final Circle display = new Circle(GHOST_RADIUS, Color.RED);
+        private final ImageViewB display = new ImageViewB(ghostSprite);
         private boolean alive, changeDirClear;
         private int trackingTime;
         private Tile trackedRandomTile;
         private Ghost() {
+            display.setFitHeight(ENTITY_RADIUS*2);
+            display.setFitWidth(ENTITY_RADIUS*2);
             Interface.addEntity(display);
         }
 
@@ -502,8 +544,7 @@ class Engine {
 
                             if (focus.x == px && focus.y == py) { // Target aquired
                                 result = focus;
-                                logDebug(MAGENTA+
-                                "Found at ("+focus.x+", "+focus.y+") from ("+x+", "+y+") after "+iterations+" iterations"+RESET+", after tile ("+focus.parent.x+", "+focus.parent.y+")");
+                                logDebug(MAGENTA+"Found at ("+focus.x+", "+focus.y+") from ("+x+", "+y+") after "+iterations+" iterations"+RESET);
                                 break;
                             }
 
@@ -657,8 +698,8 @@ class Engine {
         private boolean playerInView(int x, int y, int px, int py) {
             if (x == px || y == py) {
                 if (
-                    Math.abs(display.getCenterX()-playerDisplay.getCenterX()) <= PLAYER_RADIUS+GHOST_RADIUS && 
-                    Math.abs(display.getCenterY()-playerDisplay.getCenterY()) <= PLAYER_RADIUS+GHOST_RADIUS
+                    Math.abs(display.getCenterX()-playerDisplay.getCenterX()) <= ENTITY_RADIUS+ENTITY_RADIUS && 
+                    Math.abs(display.getCenterY()-playerDisplay.getCenterY()) <= ENTITY_RADIUS+ENTITY_RADIUS
                     ) stop();
                 else if (x < px) {
                     for (int i = x; i < px; i++) {
@@ -713,6 +754,24 @@ class Engine {
                 this.f = this.c + this.h;
                 this.parent = node;
             }
+        }
+    }
+
+    private static class ImageViewB extends ImageView {
+        private ImageViewB(Image image) {
+            super(image);
+        }
+        private double getCenterX() {
+            return getX()+ENTITY_RADIUS;
+        }
+        private double getCenterY() {
+            return getY()+ENTITY_RADIUS;
+        }
+        private void setCenterX(double value) {
+            setX(value-ENTITY_RADIUS);
+        }
+        private void setCenterY(double value) {
+            setY(value-ENTITY_RADIUS);
         }
     }
 }

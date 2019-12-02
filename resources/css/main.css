@@ -1,7 +1,17 @@
+.wall {
+    -fx-fill: #0d0083;
+}
 
+.wallBorder {
+    -fx-fill: #464646;
+}
+
+#player {
+    -fx-fill: #88833c;
+}
 
 #mainBackground {
-    -fx-fill: #ffffff;
+    -fx-fill: #000000;
 }
 
 #gameOverBackground {

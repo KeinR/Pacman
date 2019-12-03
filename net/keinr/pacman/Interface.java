@@ -24,8 +24,8 @@ class Interface {
     private static final Label
     highScore = new Label("High Score: 0"),
     score = new Label("Score: 0"),
-    gameOverDisplay = new Label("GAME OVER"),
-    gameOverDesc = new Label("Press any key to retry..."),
+    gameOverDisplay = new Label("PACMAN"),
+    gameOverDesc = new Label("Press any key to start..."),
     pausedTitle = new Label("Paused"),
     pausedDesc = new Label("Press any key to continue...");
 
@@ -43,6 +43,8 @@ class Interface {
     // Main scene
     private static final Scene main = new Scene(masterRoot, 400, 400);
 
+    private static boolean first = true;
+
     static void setup(Stage window) {
 
         Rectangle mainBackground = new Rectangle(0, 0, 400, 400);
@@ -51,23 +53,23 @@ class Interface {
         Rectangle gameOverBackground = new Rectangle(0, 0, 400, 400);
         gameOverBackground.setId("gameOverBackground");
 
-        gameOverDisplay.setLayoutX(200);
-        gameOverDisplay.setLayoutY(200);
+        gameOverDisplay.setLayoutX(150);
+        gameOverDisplay.setLayoutY(160);
         gameOverDisplay.setId("gameOverDisplay");
 
-        gameOverDesc.setLayoutX(200);
-        gameOverDesc.setLayoutY(220);
+        gameOverDesc.setLayoutX(145);
+        gameOverDesc.setLayoutY(200);
         gameOverDesc.setId("gameOverDesc");
 
         Rectangle pausedBackground = new Rectangle(0, 0, 400, 400);
         pausedBackground.setId("pausedBackground");
 
-        pausedTitle.setLayoutX(200);
-        pausedTitle.setLayoutY(200);
+        pausedTitle.setLayoutX(150);
+        pausedTitle.setLayoutY(160);
         pausedTitle.setId("pausedTitle");
 
-        pausedDesc.setLayoutX(200);
-        pausedDesc.setLayoutY(220);
+        pausedDesc.setLayoutX(120);
+        pausedDesc.setLayoutY(200);
         pausedDesc.setId("pausedDesc");
 
         Rectangle topbarBackground = new Rectangle(0, 0, 400, 17);
@@ -163,7 +165,19 @@ class Interface {
     }
 
     static void setGameOver() {
-        Platform.runLater(() -> mainRoot.getChildren().add(gameOverRoot));
+        Platform.runLater(() -> {
+            if (first) {
+                logDebug("Resetting values");
+                first = false;
+                gameOverDisplay.setText("GAME OVER");
+                gameOverDisplay.setLayoutX(150);
+                gameOverDisplay.setLayoutY(160);
+                gameOverDesc.setText("Press any key to retry...");
+                gameOverDesc.setLayoutX(160);
+                gameOverDesc.setLayoutY(200);
+            }
+            mainRoot.getChildren().add(gameOverRoot);
+        });
     }
 
     static void setStartGame() {

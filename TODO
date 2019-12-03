@@ -1,2 +1,3 @@
 - calculation caching to improve performance
 - Add more ghost sprites
+- Review thread safety (volatile variables)

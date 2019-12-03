@@ -35,6 +35,7 @@ import static net.keinr.util.Ansi.BLUE;
 import static net.keinr.util.Ansi.RESET;
 import static net.keinr.util.Ansi.BR_GREEN;
 import static net.keinr.util.Ansi.BR_BLUE;
+import static net.keinr.util.Ansi.BR_RED;
 import static net.keinr.pacman.Main.logDebug;
 import static net.keinr.pacman.Main.fDebug;
 
@@ -92,11 +93,16 @@ class Engine {
 
     static void setup() {
         Interface.setOnKeyPressed(e -> {
+            logDebug(BR_RED+"Key 1"+RESET);
             if (!gameOver) {
+                logDebug(BR_RED+"Key 2"+RESET);
+                logDebug(playerDirection +" =? "+e.getCode()+", paused = "+paused);
                 if (paused) {
+                    logDebug(BR_RED+"Key A"+RESET);
                     paused = false;
                     Interface.setUnpaused();
                 } else if (playerDirection != e.getCode()) {
+                    logDebug(BR_RED+"Key B"+RESET);
                     switch (e.getCode()) {
                         case UP:
                             if (playerDirection == KeyCode.DOWN) {
@@ -127,6 +133,7 @@ class Engine {
                             }
                             break;
                         case P:
+                            logDebug(BR_RED+"Pause pressed"+RESET);
                             if (!paused) {
                                 paused = true;
                                 Interface.setPaused();
@@ -255,7 +262,7 @@ class Engine {
             playerDisplay.setCenterY(spawnpoint.y*RATIO+RATIO/2);
             logDebug("Added player");
 
-            playerDirection = KeyCode.P; // Starts paused
+            playerDirection = KeyCode.JAPANESE_KATAKANA; // Setting it to that initially because it looks like Japanese Katana
             Interface.setStartGame();
 
             score = 0;
@@ -872,7 +879,7 @@ class Engine {
             private void setScared() {
                 reset();
                 Interface.addAllEntity(base, scared);
-                fDebug(Thread::dumpStack);
+                // fDebug(Thread::dumpStack);
             }
             private void setDead() {
                 reset();

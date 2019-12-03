@@ -40,8 +40,8 @@ import static net.keinr.pacman.Main.logDebug;
 class Engine {
     // Moddable constants
     private static final int TICK_INTERVAL = 10; // How often the game cycle runs, or "ticks", in milliseconds
-    private static final double PLAYER_SPEED = 0.5; // How fast the player moves in pixels/tick
-    private static final double GHOST_SPEED = 0.4; // How fast the ghosts moves in pixels/tick
+    private static final double PLAYER_SPEED = 0.05*TICK_INTERVAL; // How fast the player moves in pixels/tick
+    private static final double GHOST_SPEED = 0.04*TICK_INTERVAL; // How fast the ghosts moves in pixels/tick
     private static final double DOT_COLLECTION_DIST = 0.1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
     private static final int GHOST_COUNT = 2; // # of ghosts. Doesn't depend on spawnpoint availability, as they can stack if there's overflow
     private static final int PATH_MEMORY = 3; // How many moves a ghost will remember after an A* run. Higher numbers will make it harder for the ghosts to track a moving player
@@ -50,10 +50,10 @@ class Engine {
     private static final int POINTS_PER_DOT = 1; // How many points the player gets for each dot picked up
     private static final int POINTS_PER_SUPER_DOT = 10; // How many points the player gets for each super dot picked up
     private static final int POINTS_PER_GHOST = 50; // How many points the player gets for each ghost murdered
-    private static final String MAP_SOURCE = "resources/map.png"; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
+    private static final String MAP_SOURCE = "resources/images/map.png"; // Source of the map. If you choose to use an alternate one, make sure your color values are correct
     private static final Color DOT_COLOR = Color.YELLOW; // Normal dot color
     private static final Color DOT_COLOR_SUPER = Color.CYAN; // Super dot color
-    private static final int JAW_SPEED = 5; // How fast the player's jaw opens and closes
+    private static final int JAW_SPEED = (int)(0.5*TICK_INTERVAL); // How fast the player's jaw opens and closes
     private static final int JAW_MAX = 40; // Max degrees the player's jaw can open
     private static final int SUPER_MODE_LENGTH = 10000; // How long a player's super mode lasts
     private static final int STAR_SPAWN_CHANCE = 5; // % chance that a star will spawn on a tile
@@ -75,7 +75,7 @@ class Engine {
     private static Ghost[] ghosts = new Ghost[GHOST_COUNT];
     private static Image ghostSprite, ghostEyesSprite, ghostScaredSprite;
 
-    private static volatile boolean gameOver = true, paused = false;
+    private static volatile boolean gameOver = true, paused = false, loaded = false;
     private static int score, highScore;
 
     // Player related stuff
@@ -198,9 +198,9 @@ class Engine {
                 }
             }
 
-            ghostSprite = new Image(new FileInputStream("resources/sprites/ghost.png"));
-            ghostEyesSprite = new Image(new FileInputStream("resources/sprites/eyes.png"));
-            ghostScaredSprite = new Image(new FileInputStream("resources/sprites/scared.png"));
+            ghostSprite = new Image(new FileInputStream("resources/images/sprites/ghost.png"));
+            ghostEyesSprite = new Image(new FileInputStream("resources/images/sprites/eyes.png"));
+            ghostScaredSprite = new Image(new FileInputStream("resources/images/sprites/scared.png"));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -232,33 +232,36 @@ class Engine {
         }
 
         cycleControl.start();
+        loaded = true;
     }
 
     static void start() {
-        // Reset map
-        for (int x = 0; x < MAP_M; x++) {
-            for (int y = 0; y < MAP_M; y++) {
-                if (map[x][y] != null) map[x][y].reset();
+        if (loaded) {
+            // Reset map
+            for (int x = 0; x < MAP_M; x++) {
+                for (int y = 0; y < MAP_M; y++) {
+                    if (map[x][y] != null) map[x][y].reset();
+                }
             }
+
+            // Spawn ghosts
+            for (Ghost ghost : ghosts) ghost.spawn();
+
+            // Spawn player
+            Tile spawnpoint = playerSpawnpoints[random.nextInt(playerSpawnpoints.length)];
+            map[spawnpoint.x][spawnpoint.y].setCollected(false);
+            playerDisplay.setCenterX(spawnpoint.x*RATIO+RATIO/2);
+            playerDisplay.setCenterY(spawnpoint.y*RATIO+RATIO/2);
+            logDebug("Added player");
+
+            playerDirection = KeyCode.P; // Starts paused
+            Interface.setStartGame();
+
+            score = 0;
+            Interface.setScore(0);
+
+            gameOver = false;
         }
-
-        // Spawn ghosts
-        for (Ghost ghost : ghosts) ghost.spawn();
-
-        // Spawn player
-        Tile spawnpoint = playerSpawnpoints[random.nextInt(playerSpawnpoints.length)];
-        map[spawnpoint.x][spawnpoint.y].setCollected(false);
-        playerDisplay.setCenterX(spawnpoint.x*RATIO+RATIO/2);
-        playerDisplay.setCenterY(spawnpoint.y*RATIO+RATIO/2);
-        logDebug("Added player");
-
-        playerDirection = KeyCode.P; // Starts paused
-        Interface.setStartGame();
-
-        score = 0;
-        Interface.setScore(0);
-
-        gameOver = false;
     }
 
     static void stop() {
@@ -444,10 +447,12 @@ class Engine {
         }
         private void setCollected(boolean addScore) {
             if (!collected) {
-                if (addScore) addScore(pointValue);
+                if (addScore) {
+                    addScore(pointValue);
+                    if (isPowerNode) enterSupermode();
+                }
                 collected = true;
                 Interface.remove(display);
-                if (isPowerNode) enterSupermode();
             }
         }
         private void reset() {
@@ -553,6 +558,15 @@ class Engine {
                                 display.setNormal();
                                 alive = true;
                             }
+                        } else if (trackingTime <= 0) { // If the ghost has lost track of the player, have the ghost wander to a random tile
+                            if (trackedRandomTile == null || (x == trackedRandomTile.x && y == trackedRandomTile.y)) {
+                                // Search for an open random tile to wander to
+                                trackedRandomTile = openTiles[random.nextInt(openTiles.length)];
+                                logDebug(BLUE+"New target -> ("+trackedRandomTile.x+", "+trackedRandomTile.y+")"+RESET);
+                            }
+                            px = trackedRandomTile.x;
+                            py = trackedRandomTile.y;
+                            logDebug("Tracking random -> ("+px+", "+py+")");
                         } else if (scared) { // If fleeing due to player in super mode
                             logDebug(BR_GREEN+"--SCARED--"+RESET);
 
@@ -572,15 +586,6 @@ class Engine {
 
                             px = trackedRandomTile.x;
                             py = trackedRandomTile.y;
-                        } else if (trackingTime <= 0) { // If the ghost has lost track of the player, have the ghost wander to a random tile
-                            if (trackedRandomTile == null || (x == trackedRandomTile.x && y == trackedRandomTile.y)) {
-                                // Search for an open random tile to wander to
-                                trackedRandomTile = openTiles[random.nextInt(openTiles.length)];
-                                logDebug(BLUE+"New target -> ("+trackedRandomTile.x+", "+trackedRandomTile.y+")"+RESET);
-                            }
-                            px = trackedRandomTile.x;
-                            py = trackedRandomTile.y;
-                            logDebug("Tracking random -> ("+px+", "+py+")");
                         } else {
                             px = pxf;
                             py = pyf;
@@ -838,7 +843,7 @@ class Engine {
             private final ImageView base = new ImageView(ghostSprite);
             private final ImageView eyes = new ImageView(ghostEyesSprite);
             private final ImageView scared = new ImageView(ghostScaredSprite);
-            private final ImageView[] list = { base, eyes, scared };
+            // private final ImageView[] list = { base, eyes, scared };
             private GhostSprite() {
                 final double rad = ENTITY_RADIUS*2;
                 base.setFitHeight(rad);
@@ -862,7 +867,7 @@ class Engine {
                 Interface.addAllEntity(eyes);
             }
             private void reset() {
-                Interface.removeAllEntity(base, eyes, scared);
+                Interface.removeAllEntity(scared, eyes, base);
             }
             private double getCenterX() {
                 return base.getX()+ENTITY_RADIUS;
@@ -871,10 +876,15 @@ class Engine {
                 return base.getY()+ENTITY_RADIUS;
             }
             private void setCenterX(double value) {
-                for (ImageView image : list) image.setX(value-ENTITY_RADIUS);
+                base.setX(value-ENTITY_RADIUS);
+                eyes.setX(value-ENTITY_RADIUS);
+                scared.setX(value-ENTITY_RADIUS);
             }
             private void setCenterY(double value) {
-                for (ImageView image : list) image.setY(value-ENTITY_RADIUS);
+                // for (ImageView image : list) image.setY(value-ENTITY_RADIUS);
+                base.setY(value-ENTITY_RADIUS);
+                eyes.setY(value-ENTITY_RADIUS);
+                scared.setY(value-ENTITY_RADIUS);
             }
         }
     }

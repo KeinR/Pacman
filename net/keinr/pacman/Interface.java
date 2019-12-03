@@ -94,6 +94,10 @@ class Interface {
 
         window.setResizable(false);
         window.setScene(main);
+        window.getIcons().addAll(
+            new Image("resources/images/sprites/ghost.png"),
+            new Image("resources/images/sprites/eyes.png")
+        );
         window.show();
     }
 
@@ -106,7 +110,10 @@ class Interface {
     }
 
     static void addAllEntity(Node... nodes) {
-        Platform.runLater(() -> entityRoot.getChildren().addAll(nodes));
+        Platform.runLater(() -> {
+            logDebug("Adding all...");
+            entityRoot.getChildren().addAll(nodes);
+        });
     }
 
     // static void removeEntity(Node node) {

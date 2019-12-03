@@ -5,7 +5,7 @@ import javafx.scene.shape.Rectangle;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.image.ImageView;
-import javafx.scene.image.Image;
+// import javafx.scene.image.Image;
 import javafx.scene.shape.Arc;
 import javafx.scene.shape.ArcType;
 // import javafx.scene.Node;
@@ -36,6 +36,12 @@ import static net.keinr.util.Ansi.RESET;
 import static net.keinr.util.Ansi.BR_GREEN;
 import static net.keinr.util.Ansi.BR_BLUE;
 import static net.keinr.pacman.Main.logDebug;
+import static net.keinr.pacman.Main.fDebug;
+
+/**
+ * Deals with all logic related things
+ * @author Orion Musselman (KeinR)
+ */
 
 class Engine {
     // Moddable constants
@@ -43,7 +49,7 @@ class Engine {
     private static final double PLAYER_SPEED = 0.05*TICK_INTERVAL; // How fast the player moves in pixels/tick
     private static final double GHOST_SPEED = 0.04*TICK_INTERVAL; // How fast the ghosts moves in pixels/tick
     private static final double DOT_COLLECTION_DIST = 0.1; // Lower the value, the further away the player can pick up dots from. Should never be >=0.5
-    private static final int GHOST_COUNT = 2; // # of ghosts. Doesn't depend on spawnpoint availability, as they can stack if there's overflow
+    private static final int GHOST_COUNT = 5; // # of ghosts. Doesn't depend on spawnpoint availability, as they can stack if there's overflow
     private static final int PATH_MEMORY = 3; // How many moves a ghost will remember after an A* run. Higher numbers will make it harder for the ghosts to track a moving player
     private static final int TRACKING_TIME = 20000; // How long a ghost will chase the player after spotting it (milliseconds)
     private static final Path SAVE_DATA_PATH = Paths.get(".pacman"); // Location where high scores will be saved
@@ -56,7 +62,7 @@ class Engine {
     private static final int JAW_SPEED = (int)(0.5*TICK_INTERVAL); // How fast the player's jaw opens and closes
     private static final int JAW_MAX = 40; // Max degrees the player's jaw can open
     private static final int SUPER_MODE_LENGTH = 10000; // How long a player's super mode lasts
-    private static final int STAR_SPAWN_CHANCE = 5; // % chance that a star will spawn on a tile
+    private static final int SUPER_SPAWN_CHANCE = 3; // % chance that a super mode initializer will spawn on a tile
 
     // Touch at your own risk
     private static final int WALL_DEC = 255; // Wall tile color representation in base 10
@@ -73,7 +79,6 @@ class Engine {
     private static Tile[][] map = new Tile[MAP_M][MAP_M];
     private static Tile[] openTiles;
     private static Ghost[] ghosts = new Ghost[GHOST_COUNT];
-    private static Image ghostSprite, ghostEyesSprite, ghostScaredSprite;
 
     private static volatile boolean gameOver = true, paused = false, loaded = false;
     private static int score, highScore;
@@ -81,7 +86,7 @@ class Engine {
     // Player related stuff
     private static volatile KeyCode playerDirection, queuedPlayerDirection;
     private static final Arc playerDisplay = new Arc(-10, -10, ENTITY_RADIUS, ENTITY_RADIUS, 40, 300);
-    private static boolean openingJaw = false;
+    private static boolean openingJaw = false, superMode = false;
     private static double mouthOpenSS = 10;
     private static int superModeDuration = 0;
 
@@ -137,7 +142,7 @@ class Engine {
 
         // Load map
         try {
-            final BufferedImage image = ImageIO.read(new FileInputStream(MAP_SOURCE));
+            final BufferedImage image = ImageIO.read(Resource.getFile("map"));
 
             List<Tile> enemySpawnpointsPrototype = new ArrayList<Tile>();
             List<Tile> playerSpawnpointsPrototype = new ArrayList<Tile>();
@@ -197,10 +202,6 @@ class Engine {
                     }
                 }
             }
-
-            ghostSprite = new Image(new FileInputStream("resources/images/sprites/ghost.png"));
-            ghostEyesSprite = new Image(new FileInputStream("resources/images/sprites/eyes.png"));
-            ghostScaredSprite = new Image(new FileInputStream("resources/images/sprites/scared.png"));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -393,11 +394,13 @@ class Engine {
             }
             for (Ghost ghost : ghosts) ghost.move();
 
-            if (superModeDuration > 0) {
-                superModeDuration -= TICK_INTERVAL;
-            } else if (superModeDuration < 0) {
-                exitSupermode();
-                superModeDuration = 0;
+            if (superMode) {
+                if (superModeDuration <= 0) {
+                    exitSupermode();
+                    superModeDuration = 0;
+                } else {
+                    superModeDuration -= TICK_INTERVAL;
+                }
             }
         }
     }
@@ -405,18 +408,25 @@ class Engine {
     private static void enterSupermode() {
         logDebug(BR_GREEN+"Entering SUPERMODE"+RESET);
         for (Ghost ghost : ghosts) {
-            ghost.display.setScared();
-            ghost.scared = true;
-            ghost.moveQueue = new ArrayDeque<KeyCode>();
+            if (ghost.fleeLocation == null) {
+                ghost.display.setScared();
+                ghost.scared = true;
+                ghost.moveQueue = new ArrayDeque<KeyCode>();
+            }
         }
         superModeDuration = SUPER_MODE_LENGTH;
+        superMode = true;
     }
 
     private static void exitSupermode() {
         for (Ghost ghost : ghosts) {
-            ghost.display.setNormal();
-            ghost.scared = false;
+            if (ghost.fleeLocation == null) {
+                ghost.display.setNormal();
+                ghost.scared = false;
+            }
         }
+        superMode = false;
+        logDebug(RED+"EXITED SUPER MODE"+RESET);
     }
 
     private static void recenterPlayer(int gridX, int gridY) {
@@ -434,7 +444,7 @@ class Engine {
             this.x = x;
             this.y = y;
             this.display = new Circle(x*RATIO+RATIO/2, y*RATIO+RATIO/2, RATIO/6);
-            if (random.nextInt(101) <= STAR_SPAWN_CHANCE) {
+            if (random.nextInt(101) <= SUPER_SPAWN_CHANCE) {
                 this.pointValue = POINTS_PER_SUPER_DOT;
                 this.display.setFill(DOT_COLOR_SUPER);
                 this.isPowerNode = true;
@@ -541,7 +551,7 @@ class Engine {
             double yy = display.getCenterY()/RATIO - y;
             if (xx > 0.485 && xx < 0.515 && yy > 0.485 && yy < 0.515) {
 
-                if (changeDirClear && (x != pxf || y != pyf)) {
+                if (changeDirClear) {
 
                     if (moveQueue.peek() != null) {
                         changeDirection(x, y);
@@ -779,6 +789,7 @@ class Engine {
                         moveQueue = new ArrayDeque<KeyCode>();
                         alive = false;
                         scared = false;
+                        addScore(POINTS_PER_GHOST);
                         logDebug(RED+"SET DEAD"+RESET);
                     } else if (alive) {
                         stop();
@@ -840,9 +851,9 @@ class Engine {
         }
 
         private static class GhostSprite {
-            private final ImageView base = new ImageView(ghostSprite);
-            private final ImageView eyes = new ImageView(ghostEyesSprite);
-            private final ImageView scared = new ImageView(ghostScaredSprite);
+            private final ImageView base = new ImageView(Resource.getImage("ghost"));
+            private final ImageView eyes = new ImageView(Resource.getImage("ghostEyes"));
+            private final ImageView scared = new ImageView(Resource.getImage("ghostScared"));
             // private final ImageView[] list = { base, eyes, scared };
             private GhostSprite() {
                 final double rad = ENTITY_RADIUS*2;
@@ -861,6 +872,7 @@ class Engine {
             private void setScared() {
                 reset();
                 Interface.addAllEntity(base, scared);
+                fDebug(Thread::dumpStack);
             }
             private void setDead() {
                 reset();

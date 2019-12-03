@@ -6,8 +6,13 @@ import java.util.concurrent.Executors;
 
 import net.keinr.util.Debug;
 
+/**
+ * Initialization (Main) class
+ * @author Orion Musselman (KeinR)
+ */
+
 public class Main extends Application {
-    private static final boolean DEBUG_ENABLED = true;
+    private static final boolean DEBUG_ENABLED = false;
     
     private static final Debug debug = new Debug(DEBUG_ENABLED);
 
@@ -23,6 +28,10 @@ public class Main extends Application {
 
     static void logDebug(String message) {
         debug.logRouted(message, 1);
+    }
+
+    static void fDebug(Runnable function) {
+        debug.logFunctionRouted(function, 1);
     }
 
     public static void main(String[] args) { launch(args); }

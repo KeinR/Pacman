@@ -11,8 +11,12 @@ import javafx.event.EventHandler;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.shape.Rectangle;
 
-
 import static net.keinr.pacman.Main.logDebug;
+
+/**
+ * Deals with all display related things
+ * @author Orion Musselman (KeinR)
+ */
 
 class Interface {
 
@@ -95,8 +99,7 @@ class Interface {
         window.setResizable(false);
         window.setScene(main);
         window.getIcons().addAll(
-            new Image("resources/images/sprites/ghost.png"),
-            new Image("resources/images/sprites/eyes.png")
+            Resource.getImage("icon")
         );
         window.show();
     }

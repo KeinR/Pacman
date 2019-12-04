@@ -74,6 +74,11 @@ class Engine {
     private static final int PATHFINDING_ITER_CAP = 1000; // Absolute max A* iterations used to find a valid path to the target from ghost.
     private static final double ENTITY_RADIUS = RATIO/3; // radius of player & ghosts
 
+    // Cached calculations
+    private static final double GHOST_SPEED_X2 = GHOST_SPEED*2;
+    private static final double HALF_RATIO = RATIO/2;
+    private static final double SIXTH_RATIO = RATIO/6;
+
     private static final TimedThread cycleControl = new TimedThread("cycle", TICK_INTERVAL, () -> cycle());
     private static final Random random = new Random();
     private static Tile[] enemySpawnpoints, playerSpawnpoints;
@@ -258,8 +263,8 @@ class Engine {
             // Spawn player
             Tile spawnpoint = playerSpawnpoints[random.nextInt(playerSpawnpoints.length)];
             map[spawnpoint.x][spawnpoint.y].setCollected(false);
-            playerDisplay.setCenterX(spawnpoint.x*RATIO+RATIO/2);
-            playerDisplay.setCenterY(spawnpoint.y*RATIO+RATIO/2);
+            playerDisplay.setCenterX(spawnpoint.x*RATIO+HALF_RATIO);
+            playerDisplay.setCenterY(spawnpoint.y*RATIO+HALF_RATIO);
             logDebug("Added player");
 
             playerDirection = KeyCode.JAPANESE_KATAKANA; // Setting it to that initially because it looks like Japanese Katana
@@ -450,7 +455,7 @@ class Engine {
         private Tile(int x, int y) {
             this.x = x;
             this.y = y;
-            this.display = new Circle(x*RATIO+RATIO/2, y*RATIO+RATIO/2, RATIO/6);
+            this.display = new Circle(x*RATIO+HALF_RATIO, y*RATIO+HALF_RATIO, SIXTH_RATIO);
             if (random.nextInt(101) <= SUPER_SPAWN_CHANCE) {
                 this.pointValue = POINTS_PER_SUPER_DOT;
                 this.display.setFill(DOT_COLOR_SUPER);
@@ -491,8 +496,8 @@ class Engine {
         private void spawn() {
             Tile spawnpoint = enemySpawnpoints[random.nextInt(enemySpawnpoints.length)];
             map[spawnpoint.x][spawnpoint.y].setCollected(false);
-            display.setCenterX(spawnpoint.x*RATIO+RATIO/2);
-            display.setCenterY(spawnpoint.y*RATIO+RATIO/2);
+            display.setCenterX(spawnpoint.x*RATIO+HALF_RATIO);
+            display.setCenterY(spawnpoint.y*RATIO+HALF_RATIO);
             alive = true;
             changeDirClear = true;
             scared = false;
@@ -508,7 +513,7 @@ class Engine {
             y = (int)(display.getCenterY()/RATIO), // Grid x/y values for ghost
             pxf = (int)(playerDisplay.getCenterX()/RATIO), // Player x/y grid values
             pyf = (int)(playerDisplay.getCenterY()/RATIO);
-            final double speed = fleeLocation == null ? GHOST_SPEED : GHOST_SPEED*2;
+            final double speed = fleeLocation == null ? GHOST_SPEED : GHOST_SPEED_X2;
 
             double dist;
             switch (currentDirection) {

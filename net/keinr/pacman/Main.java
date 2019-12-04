@@ -12,7 +12,7 @@ import net.keinr.util.Debug;
  */
 
 public class Main extends Application {
-    private static final boolean DEBUG_ENABLED = true;
+    private static final boolean DEBUG_ENABLED = false;
     
     private static final Debug debug = new Debug(DEBUG_ENABLED);
 
